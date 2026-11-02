@@ -1,0 +1,1 @@
+"""Core layer shared by all domains."""

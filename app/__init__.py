@@ -1,0 +1,1 @@
+"""Core layer: schemas, config, errors, geometry, storage."""
