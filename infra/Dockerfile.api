@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Системные пакеты для OpenCV (требуются в slim-образах)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Зависимости Python (без TensorFlow — лёгкий образ API)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Исходный код и ресурсы шаблона (без __pycache__ — см. .dockerignore)
+COPY app ./app
+COPY generate_blank.py ./generate_blank.py
+COPY template_layout.json ./template_layout.json
+COPY content_v1.json ./content_v1.json
+COPY content_v2.json ./content_v2.json
+COPY content_v3.json ./content_v3.json
+COPY questions.csv ./questions.csv
+
+# Директории данных внутри контейнера (первичная структура, заполняется при работе)
+RUN mkdir -p /data/templates /data/jobs /data/models /data/output
+
+# Окружение (переопределяется через docker run -e или infra/.env)
+ENV DATA_DIR=/data
+ENV TEMPLATES_DIR=/data/templates
+ENV JOBS_DIR=/data/jobs
+ENV MODELS_DIR=/data/models
+ENV CORNER_MODE=centers
+ENV LOG_LEVEL=INFO
+
+# Порт основного веб-интерфейса
+EXPOSE 8000
+
+# Запуск FastAPI (веб-интерфейс, генерация шаблонов, нормализация)
+CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

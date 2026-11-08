@@ -1,0 +1,23 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - app_data:/data
+    restart: unless-stopped
+
+  trainer:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.trainer
+    volumes:
+      - app_data:/data
+    profiles:
+      - trainer
+
+volumes:
+  app_data:

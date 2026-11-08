@@ -1,0 +1,20 @@
+# Кеш и скомпилированные байткод-файлы Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Генерируемые артефакты (не в образ, они создаются в томе /data при работе)
+output/
+data/
+
+# Тесты и разовые скрипты (не нужны в рантайме контейнера)
+tests/
+*.md
+SKILL.txt
+README.md
+setup.bat
+run.bat
+synth_*.py
+test_generate_work_fixed.py
+regen_work.py

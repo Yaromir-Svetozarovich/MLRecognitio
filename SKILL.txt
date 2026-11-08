@@ -1,0 +1,738 @@
+================================================================================
+SKILL: Blank Aligner — интегрированная система распознавания A4-бланков
+Версия: 5 (plaintext; актуализировано после синхронизации раскладки
+маркеров, авто-ROI, миграции спек и починки Web/API нормализации)
+================================================================================
+
+--------------------------------------------------------------------------------
+1. РОЛЬ
+--------------------------------------------------------------------------------
+Ты — senior Python-инженер. Ведёшь проект: генерация A4-бланка с ArUco-
+маркерами, нормализация фото, нарезка ROI, обучение CNN, экспорт TFLite,
+DAG-оркестратор с детерминированным Checker и интерфейсная обвязка.
+Думай как программист: модульность, чёткие контракты, тестируемость,
+отсутствие лишних зависимостей. Не переизобретай зафиксированные решения.
+
+Источник истины по требованиям — ТЗ по ЛР1–ЛР5 (файлы «Постановка задачи»,
+«Цель работы разработать систему описания», «Цели работы», «Цели и задачи
+работы»). Этот SKILL не отменяет ТЗ. При конфликте SKILL vs ТЗ приоритет
+у ТЗ, расхождение выносится в отчёт.
+
+--------------------------------------------------------------------------------
+2. ОБЩАЯ ЦЕЛЬ СИСТЕМЫ (сквозной сценарий)
+--------------------------------------------------------------------------------
+ЛР1  Генератор шаблона: A4-бланк с 4 ArUco-маркерами + поля ответов.
+      ГОТОВО. Не трогать.
+ЛР2  Нормализатор: фото -> aligned_blank.png (2100x2970) + edges.png.
+ЛР3  ROI-спецификация + нарезка + манифест датасета (crops, labels.csv,
+      dataset_manifest.json, сплиты по photo_id).
+ЛР4  CNN-классификатор + custom training loop (без model.fit),
+      Macro-F1, чекпоинты, confusion matrix.
+ЛР5  Экспорт в TFLite (динамическое квантование), DAG-оркестратор,
+      детерминированный Checker (CORRECT/INCORRECT/NEEDS_REVIEW),
+      интерфейс (Web + CLI), Settings из GUI/CLI.
+
+Сквозной поток:
+  шаблон -> печать -> заполнение -> фото/скан ->
+  нормализация -> нарезка ROI -> (обучение CNN) -> TFLite ->
+  DAG: CV -> Extraction -> ML -> Checker -> GradeResult.
+
+--------------------------------------------------------------------------------
+3. КЛЮЧЕВЫЕ АРХИТЕКТУРНЫЕ РЕШЕНИЯ (НЕ МЕНЯТЬ)
+--------------------------------------------------------------------------------
+Интерфейс: Web (FastAPI + Jinja2 + vanilla JS) как основной; CLI как второй
+адаптер; Desktop — опционально. Домены про HTTP/UI не знают.
+
+Единственный DAG-оркестратор: serving/pipeline.py.
+normalizer/aligner.py — это не «pipeline», а CV-узел. Избегаем коллизии имён.
+
+TemplateSpec — единственный источник истины о «правильном листе»:
+template_version, canvas_size, roi_fields (id, type, coords), + расширения
+(dictionary_id, expected_marker_ids, corner_by_id, marker_layout,
+marker_size_px, padding_px, per-field confidence_threshold).
+Формат строго совместим с ТЗ ЛР3; расширения аддитивны.
+Генератор (ЛР1) заполняет roi_fields автоматически из
+template_layout.json; пустой roi_fields у нового шаблона — ошибка
+конфигурации, а не норма.
+
+AnswerKey — отдельный файл: template_version, answers: dict[field_id -> str].
+field_id совпадают с roi_fields[].id. При несовпадении — AnswerKeyMismatchError.
+
+Привязка маркеров к углам (corner_by_id), каноническая раскладка:
+  ID 0 -> TL, ID 1 -> TR, ID 2 -> BR, version_marker_id -> BL.
+  Физические ID задаются в template_layout.json:
+    markers.ids.TL = 0, markers.ids.TR = 1, markers.ids.BR = 2,
+    markers.ids.BL отсутствует — BL всегда version_marker_id (3..49).
+  Единственная точка истины в коде — resolve_marker_ids() в
+  template/generator.py; её обязаны использовать и генератор спеки,
+  и рендерер DOCX. Дублировать раскладку в рендерере запрещено.
+Режимы углов (corner_mode), дефолт для сдачи — "centers" (буква ТЗ ЛР2):
+  centers             — центры маркеров -> углы прямоугольника;
+  centers_to_layout   — центры маркеров -> marker_layout (сохраняет поля);
+  outer_corners       — внешние углы маркеров -> углы прямоугольника.
+Trade-off центров оговорить в отчёте.
+
+Источник истины по ID: TemplateSpec авторитетен; AlignConfig.expected_ids —
+фолбэк CLI/отладки без спеки.
+
+Ошибки типизированы. Домены кидают кастомные исключения; DAG Fail-Fast:
+любое исключение узла прерывает конвейер. HTTP-маппинг — единый handler.
+
+Инференс в api — только через tflite.Interpreter (tflite-runtime или
+ai-edge-litert). Импорт tensorflow/tensorflow.keras в api и serving ЗАПРЕЩЁН.
+TensorFlow живёт только в trainer (offline).
+
+TfliteRunner — пул интерпретаторов (InterpreterPool, pool_size из Settings,
+дефолт 4). API — синхронные def (FastAPI уводит в threadpool).
+
+Checker — детерминированный. Порог θ из Settings (дефолт 0.80), per-field
+override в TemplateSpec. Статусы: CORRECT / INCORRECT / NEEDS_REVIEW.
+Итоговый балл считается БЕЗ NEEDS_REVIEW (они уходят на ручную проверку).
+
+Settings — единый источник runtime-настроек (Pydantic). Меняется через
+Web-вкладку «Настройки» и CLI `settings`; пробрасывается в CLI-флаги и API.
+
+Jobs — для batch и тяжёлых прогонов. POST /api/grade — синхронный для
+одного фото; POST /api/grade/batch -> job_id; GET /api/jobs/{id} -> статус.
+
+MVP: один лист в кадре. >4 маркеров -> UnexpectedMarkerCountError.
+
+--------------------------------------------------------------------------------
+4. СТЕК
+--------------------------------------------------------------------------------
+Python 3.11+.
+
+api (лёгкий, без TensorFlow):
+  opencv-contrib-python >=4.8,<5   (cv2.aruco; в коде cv2.aruco.detectMarkers
+                                    как в ТЗ ЛР2; комментарий про ArucoDetector)
+  numpy >=1.26
+  fastapi >=0.110, uvicorn >=0.29, pydantic >=2.7, jinja2 >=3.1
+  tflite-runtime >=2.14 (fallback: ai-edge-litert)
+  python-multipart (для upload)
+
+trainer (offline):
+  tensorflow >=2.16,<3
+  numpy, opencv-contrib-python
+  (свой Macro-F1 через tf.math.confusion_matrix; tensorflow-addons не используем)
+
+tests:
+  pytest >=8, httpx >=0.27
+
+Docker + docker-compose; том /data.
+Логи: стандартный logging, JSON, с job_id/template_id/photo_id.
+
+--------------------------------------------------------------------------------
+5. СТРУКТУРА РЕПОЗИТОРИЯ
+--------------------------------------------------------------------------------
+  app/
+    core/
+      config.py      AppConfig + Settings (runtime, Pydantic)
+      schemas.py     TemplateSpec, RoiField, AlignConfig, AlignResult,
+                     AnswerKey, FieldGrade, GradeResult, JobStatus, ...
+      errors.py      доменные исключения + маппинг в HTTP
+      geometry.py    order_points, homography helpers
+      storage.py     абстракция хранилища (local FS -> S3 позже)
+
+    template/        ГОТОВО: generator.py (validate/build TemplateSpec,
+                     resolve_marker_ids, build_roi_fields), renderer.py (DOCX,
+                     плавающая таблица с абсолютной геометрией), cli.py
+
+    normalizer/      ЛР2 ГОТОВО: preprocessing.py, markers.py, aligner.py,
+                     service.py (align принимает путь/bytes/ndarray)
+
+    roi/             ЛР3 ГОТОВО: spec_loader.py, extractor.py
+
+    dataset/         ЛР3-ЛР4 частично: builder.py, splits.py (photo_id
+                     70/15/15)
+
+    training/        ЛР4 (не создано): model.py, dataset_tf.py, metrics.py,
+                     train_loop.py, train.py, config.py (TrainingConfig)
+
+    export/          ЛР5 (не создано): export_tflite.py
+
+    serving/         ЛР5 (не создано): pipeline.py (DAG), checker.py,
+                     tflite_runner.py, answer_key.py
+
+    api/             FastAPI: main.py, routes/{templates,align}.py реализованы;
+                     routes/{extract,grade,jobs,settings}.py — план, deps.py,
+                     static/
+      templates/     Jinja2: index, settings, grade, jobs
+      static/        JS/CSS
+
+    cli.py           CLI-адаптер (argparse, JSON-вывод, exit codes)
+
+    infra/           Dockerfile.api, Dockerfile.trainer, docker-compose.yml
+    tests/           unit + интеграционные + CLI + API + E2E
+
+Правило: normalizer/, roi/, dataset/, training/, serving/ не импортируют
+FastAPI. Принимают numpy/модели, возвращают модели. CLI и API — тонкие
+адаптеры над serving.pipeline и доменными сервисами.
+
+--------------------------------------------------------------------------------
+6. КОНТРАКТЫ ДАННЫХ (Pydantic v2)
+--------------------------------------------------------------------------------
+class RoiField(BaseModel):
+    id: str
+    type: Literal["digit", "text", "checkbox", "handwriting"]
+    coords: tuple[int, int, int, int]           # x, y, w, h в 2100x2970
+    confidence_threshold: float | None = None   # per-field override
+
+class TemplateSpec(BaseModel):
+    template_version: str
+    canvas_size: tuple[int, int] = (2100, 2970)
+    roi_fields: list[RoiField]           # заполняется генератором; не пустой
+    # расширения (аддитивны к формату ТЗ ЛР3):
+    dictionary_id: int = cv2.aruco.DICT_4X4_50
+    expected_marker_ids: list[int] = [0, 1, 2, 3]
+    corner_by_id: dict[int, Literal["TL","TR","BR","BL"]] = {0:"TL",1:"TR",2:"BR",3:"BL"}
+    marker_layout: dict[int, tuple[int, int]] | None = None
+    marker_size_px: int | None = None
+    padding_px: int = 5
+
+class AlignConfig(BaseModel):
+    dictionary_id: int = cv2.aruco.DICT_4X4_50
+    expected_ids: tuple[int, ...] = (0, 1, 2, 3)   # фолбэк CLI без TemplateSpec
+    output_size: tuple[int, int] = (2100, 2970)
+    border_value: tuple[int, int, int] = (255, 255, 255)
+    canny_thresholds: tuple[int, int] = (50, 150)
+    strict_marker_count: bool = True
+    corner_mode: Literal["centers","centers_to_layout","outer_corners"] = "centers"
+    min_quad_area_px: int = 100_000
+
+class AlignResult(BaseModel):
+    marker_ids: list[int]
+    source_points: list[tuple[float, float]]       # TL,TR,BR,BL
+    dst_points: list[tuple[float, float]]
+    homography: list[list[float]]
+    output_size: tuple[int, int]
+    corner_mode: str
+    warnings: list[str]
+    # output_image/edges_image — numpy, передаются отдельно, не в Pydantic
+
+class CropBatch(BaseModel):
+    template_version: str
+    crops: list[dict]                             # {field_id, coords, path|bytes}
+    normalized_size: tuple[int, int] | None       # если normalize=True
+
+class AnswerKey(BaseModel):
+    template_version: str
+    answers: dict[str, str]                       # field_id -> expected_label
+
+class FieldGrade(BaseModel):
+    field_id: str
+    predicted: str | None
+    confidence: float | None
+    status: Literal["CORRECT","INCORRECT","NEEDS_REVIEW"]
+
+class GradeResult(BaseModel):
+    template_version: str
+    photo_id: str
+    fields: list[FieldGrade]
+    score: float
+    max_score: float
+    needs_review: list[str]
+    warnings: list[str] = []
+
+class JobStatus(BaseModel):
+    job_id: str
+    state: Literal["queued","running","done","error"]
+    progress: float                               # 0..1
+    result: GradeResult | None = None
+    error: dict | None = None
+
+class Settings(BaseModel):
+    confidence_threshold: float = 0.80
+    canny_thresholds: tuple[int, int] = (50, 150)
+    corner_mode: Literal["centers","centers_to_layout","outer_corners"] = "centers"
+    padding_px: int = 5
+    output_size: tuple[int, int] = (2100, 2970)
+    tflite_pool_size: int = 4
+    batch_size: int = 1                           # для grade/batch
+    split_ratios: tuple[float, float, float] = (0.70, 0.15, 0.15)
+    learning_rate: float = 0.001
+    epochs: int = 30
+    train_batch_size: int = 32
+
+class TrainingConfig(BaseModel):
+    learning_rate: float = 0.001
+    epochs: int = 30
+    batch_size: int = 32
+    split_ratios: tuple[float, float, float] = (0.70, 0.15, 0.15)
+    label_encoding: Literal["one_hot","integer"] = "integer"
+    input_shape: tuple[int, int, int] = (64, 128, 1)
+    num_classes: int
+
+class FieldRecognizer(Protocol):
+    def predict(self, crops: list) -> list[tuple[str, float]]: ...
+    # возвращает [(predicted_label, confidence), ...]
+
+Контракт template_layout.json (расширение, не ломает ТЗ ЛР1):
+  markers.ids: {TL: 0, TR: 1, BR: 2}
+  markers.positions: {TL, TR, BR, BL} в мм
+  question_columns_mm: [num_w, question_w, answer_w]
+  roi.table_top_mm:   абсолютная Y-позиция таблицы на странице, мм
+  roi.row_height_mm:  фиксированная высота строки вопроса, мм
+  roi.padding_px:     padding для roi_fields
+Генератор и рендерер читают одни и те же поля. Изменение
+roi.table_top_mm / roi.row_height_mm / question_columns_mm меняет
+и DOCX, и координаты roi_fields — это требование ЛР3, а не баг.
+Версия маркера: BL = content.version_marker_id (3..49); TL/TR/BR
+берутся из markers.ids. Старый формат спеки (template_id, version,
+rois, created_at) несовместим: такие файлы нужно перегенерировать.
+
+--------------------------------------------------------------------------------
+7. ДОМЕННЫЕ ОШИБКИ И HTTP-КОДЫ
+--------------------------------------------------------------------------------
+Единый handler в FastAPI и CLI. Тело ошибки:
+  {"code": "...", "message": "...", "details": {...}}
+UI — человекочитаемое сообщение, не traceback.
+
+  ImageReadError                 -> 400
+  InvalidImageError              -> 400
+  CropOutOfBoundsError           -> 400
+  JobNotFoundError               -> 404
+  UploadTooLargeError            -> 413
+  DocumentAlignmentError (базовая)-> 422 (или 500, если не частный случай)
+  MarkersNotFoundError           -> 422
+  MarkersIncompleteError         -> 422
+  UnexpectedMarkerCountError     -> 422
+  DuplicateMarkerIdsError        -> 422
+  MarkerIdsMismatchError         -> 422
+  TemplateSpecMismatchError      -> 422
+  AnswerKeyMismatchError         -> 422
+  ConfigError                    -> 422
+  RoiExtractionError             -> 422
+  HomographyError                -> 500
+  WarpError                      -> 500
+  TfliteLoadError                -> 500
+  TfliteInferenceError           -> 500
+  CheckerError                   -> 500
+  неизвестное                    -> 500
+
+Вырожденность гомографии (HomographyError):
+  площадь < AlignConfig.min_quad_area_px; коллинеарные точки;
+  np.linalg.matrix_rank(H) < 3; координаты NaN/Inf.
+
+Fail-Fast в DAG: любое из перечисленных исключений прерывает pipeline.py.
+
+--------------------------------------------------------------------------------
+8. API (FastAPI)
+--------------------------------------------------------------------------------
+  GET  /                          Web UI (Jinja2)
+  GET  /settings                  страница «Настройки»
+  GET  /api/settings              -> Settings
+  PUT  /api/settings              обновить Settings (runtime)
+  POST /api/settings/reset        сброс к дефолтам
+
+  POST /api/templates             создать шаблон [реализовано]
+  POST /api/templates/generate-work
+                                  layout + questions.csv -> variants DOCX,
+                                  per-variant spec.json, manifest.json, ZIP
+                                  [реализовано]
+  GET  /api/templates/{id}/docx   скачать DOCX для печати [реализовано]
+  GET  /api/templates/{id}/png    скачать PNG для печати (если есть)
+  GET  /api/templates/{id}        TemplateSpec
+  GET  /api/templates             список
+  GET  /api/templates/download/{path}
+                                  скачать сгенерированный DOCX/SPEC/ZIP
+                                  [реализовано]
+
+  POST /api/align                 multipart photo + template_id -> AlignResult
+                                  (+ aligned_blank.png, edges.png)     [отладка]
+                                  Ответ дополнительно содержит
+                                  aligned_image / edges_image — PNG в
+                                  base64 data URL для превью в Web UI.
+                                  [реализовано]
+  POST /api/extract               aligned + template_id -> CropBatch  [реализовано]
+                                  Возвращает по одному base64 data URL на
+                                  каждое roi_field (crop_image), плюс coords
+                                  и size.
+
+  POST /api/grade                 multipart photo + template_id + answer_key
+                                  -> GradeResult (синхронно, одно фото)
+  POST /api/grade/batch           multipart files[] + template_id + answer_key
+                                  -> JobStatus (job_id)
+  GET  /api/jobs/{job_id}         -> JobStatus (поллинг)
+  DELETE /api/jobs/{job_id}       отмена
+
+Технические требования:
+  - /api/align, /api/extract, /api/grade — синхронные def (threadpool).
+  - /api/grade/batch — создаёт job, возвращает сразу; обработка в
+    ThreadPoolExecutor или фоновом воркере.
+  - Проверка max_upload_mb до чтения в память.
+  - Форматы: JPEG, PNG; валидация MIME + imdecode.
+  - I/O Efficiency: не писать upload на диск; cv2.imdecode(np.frombuffer(...)).
+  - NormalizerService.align принимает путь / bytes / np.ndarray и сам
+    вызывает read_image. API передаёт сырые bytes; передавать bytes
+    напрямую в aligner.align() запрещено (там ожидается np.ndarray).
+  - /api/align всегда возвращает aligned_image и edges_image (data URL),
+    независимо от save_aligned/save_edges. Запись artifacts на диск —
+    опциональна; Web UI не должен делать второй запрос за картинками.
+  - InterpreterPool: pool_size из Settings; TFLite invoke под захватом
+    интерпретатора из пула.
+  - Graceful Degradation: кастомные исключения -> HTTP-код + JSON.
+
+--------------------------------------------------------------------------------
+9. CLI (тонкий адаптер над serving/доменами)
+--------------------------------------------------------------------------------
+  python -m app.cli align <input.jpg> --template <id|spec.json>
+      --out aligned_blank.png --edges edges.png
+      [--corner-mode ...] [--json]                         [реализовано]
+  python -m app.cli extract <aligned.png> --template <id|spec.json>
+      --out crops/ [--json]                                [реализовано]
+  python -m app.cli build-dataset --crops-dir <dir> --labels <labels.csv>
+      --out dataset/ --template-version <ver> --photo-id <id>
+      [--split train|val|test] [--json]                    [реализовано]
+  python -m app.cli train --data dataset/ --config training.yaml [--json]
+                                                           [план, ЛР4]
+  python -m app.cli export-tflite --model model.keras --out model.tflite
+      [--quantization dynamic] [--benchmark benchmark.json] [--json]
+                                                           [план, ЛР5]
+  python -m app.cli grade <photo.jpg> --template <id|spec.json>
+      --answer-key answer_key.json [--json]                [план, ЛР5]
+  python -m app.cli settings [get|set|reset] [--key K --value V] [--json]
+                                                           [план, ЛР5]
+  python -m app.cli serve [--host 0.0.0.0 --port 8000]     [план, ЛР5]
+
+  Генерация шаблона (ЛР1):
+  python generate_blank.py --layout template_layout.json \
+      --content content_vN.json --output output\blank_vN.docx \
+      [--template-id <id>]
+  Спека пишется рядом: output\blank_vN.spec.json.
+  --template-id нужен для воспроизводимости (иначе генерируется
+  случайный template_version).
+
+Exit codes:
+  0 — успех
+  2 — доменная ошибка (маркеры, ID, гомография, спека, ключ, конфиг)
+  3 — I/O (не прочитан вход, не записан выход)
+  4 — ошибка обучения/экспорта (train, export-tflite)
+Никаких traceback в stdout; полный traceback — в лог.
+
+settings CLI и Web-вкладка «Настройки» пишут в один и тот же Settings
+(runtime-конфиг). Приоритет: CLI-флаг > Settings > дефолт.
+
+--------------------------------------------------------------------------------
+10. DOCKER
+--------------------------------------------------------------------------------
+api (лёгкий, без TensorFlow):
+  python:3.11-slim
+  apt: libgl1 libglib2.0-0
+  pip: opencv-contrib-python, numpy, fastapi, uvicorn, pydantic, jinja2,
+       python-multipart, tflite-runtime (или ai-edge-litert)
+  порт 8000, том /data
+  ЗАПРЕЩЕНО: tensorflow, tensorflow.keras в requirements.
+
+trainer (offline):
+  python:3.11-slim
+  pip: tensorflow, numpy, opencv-contrib-python
+  не публикует порт; запуск по команде (train / export-tflite)
+  том /data (общий с api)
+
+worker (опционально, для batch jobs):
+  тот же образ, что api + celery/rq
+redis:7-alpine (опционально, если worker)
+
+Том /data:
+  templates/{template_id}/{name}.docx, spec.json
+  templates/{work_name}/вариант_N/{docx, spec.json}, manifest.json, *.zip
+  jobs/{job_id}/input.jpg, aligned.png, edges.png, crops/, grade_report.json
+  models/model.keras, model.tflite, best_weights, history.csv,
+         confusion_matrix.png, benchmark.json
+  answer_keys/{template_version}.json
+
+--------------------------------------------------------------------------------
+11. КОНФИГ
+--------------------------------------------------------------------------------
+AppConfig (env + yaml, инжектится через Depends; os.getenv по коду запрещён):
+  data_dir, templates_dir, jobs_dir, models_dir
+  dictionary_id, canvas_size
+  max_upload_mb
+  log_level
+  default_settings_path
+
+Settings (runtime, Pydantic; источник для Web/CLI/API):
+  см. раздел 6. Изменяется через PUT /api/settings и CLI `settings`.
+  Хранится в /data/settings.json; загружается при старте, мержится с дефолтами.
+
+TrainingConfig (только trainer): см. раздел 6.
+
+--------------------------------------------------------------------------------
+12. ПРИНЦИПЫ КОДА
+--------------------------------------------------------------------------------
+Домены не знают про HTTP/UI. Сервисы принимают numpy/модели, возвращают модели.
+DAG (serving/pipeline.py) — единственная точка оркестрации.
+Нормализатор/roi/training/serving не импортируют FastAPI.
+Импорт tensorflow/tensorflow.keras в api и serving запрещён (проверяется тестом).
+Ошибки типизированы, единый handler в FastAPI и CLI.
+Pydantic-схемы в core/schemas.py, общие для API, CLI и доменов.
+Имена артефактов фиксированы (см. раздел 14).
+Логи структурированные (JSON), с job_id/template_id/photo_id.
+I/O Efficiency: upload не пишется на диск, декодируется в память.
+Thread/Async isolation: CPU-bound вынесен из event loop (def-эндпоинты,
+ThreadPoolExecutor, InterpreterPool).
+Graceful Degradation: любое исключение домена -> понятное сообщение,
+сервис не падает.
+TemplateSpec.template_version — при несовместимых изменениях старые шаблоны
+конвертируются или отклоняются (TemplateSpecMismatchError), не «тихо ломаются».
+
+--------------------------------------------------------------------------------
+13. ТЕСТЫ
+--------------------------------------------------------------------------------
+Конфигурация: pytest.ini с testpaths = tests; корневые одноразовые скрипты
+(test_generate_work_fixed.py и т.п.) в прогон не попадают.
+Текущий статус: python -m pytest -q -> 28 passed.
+
+Unit [реализовано]:
+  template/generator: validate_inputs (ok, мало вопросов, битый
+    answer_type), build_template_spec (canvas 2100x2970, marker_size_px
+    150, 4 ожидаемых ID), каноническая раскладка углов
+    (0=TL, 1=TR, 2=BR, version_marker_id=BL), непустые roi_fields
+    (по одному на вопрос, координаты внутри холста).
+  template/renderer: DOCX создаётся, 4 встроенных изображения,
+    ArUco-маркеры декодируются cv2.aruco.
+  normalizer: markers (валидация, corner_by_id, >4, ConfigError при
+    centers_to_layout без TemplateSpec), geometry (три corner_mode,
+    вырожденность), preprocessing (grayscale, Canny),
+    NormalizerService.align принимает сырые bytes и сам декодирует
+    изображение (как это делает API).
+  roi: extractor (padding, CropOutOfBoundsError, нормализация,
+    extract_crops по roi_fields).
+  dataset: splits (photo_id 70/15/15, отсутствие утечек, split_proof.json).
+
+Unit [план, ЛР4–ЛР5]:
+  training: model (Conv/Pool/Dropout/GAP, 3 блока), metrics (Macro-F1,
+    confusion matrix), train_loop (есть @tf.function, нет model.fit —
+    поиск по коду).
+  export: export_tflite (файл создан, размер уменьшился, benchmark.json).
+  serving: checker (порог, 3 статуса, балл без NEEDS_REVIEW),
+    tflite_runner (pool_size, invoke), pipeline (Fail-Fast, DAG-порядок,
+    GradeResult).
+
+Интеграционные:
+  Синтетика: 4 маркера -> align -> extract -> grade; размер 2100x2970,
+  белый фон, порядок source_points. [align + extract проверено вручную]
+  Регрессия: фото под углом с ground-truth гомографией, ошибка < 3 px.
+  API (httpx): успех, ImageReadError, MarkersIncompleteError,
+  UploadTooLargeError, AnswerKeyMismatchError, JobNotFoundError,
+  корректные HTTP-коды и JSON. [POST /api/align проверен на синтетике:
+  200, marker_ids [0,1,2,3], output 2100x2970, aligned_image +
+  edges_image как data URL]
+  Web generate-work: DOCX + per-variant spec.json + manifest.json + ZIP,
+  corner_by_id и непустые roi_fields проверены вручную.
+  API /api/extract: POST с aligned фото + template_id возвращает
+  по одному base64 data URL на каждое roi_field (crop_image), плюс coords
+  и size [реализовано, тесты test_extract_api.py].
+  CLI: exit 0/2/3/4, валидный JSON в stdout, отсутствие traceback.
+  E2E: фото -> GradeResult; невалидный вход -> понятная ошибка, сервис жив.
+  Инвариант: grep "tensorflow" в app/api и app/serving -> пусто.
+
+--------------------------------------------------------------------------------
+14. ОБЯЗАТЕЛЬНЫЕ АРТЕФАКТЫ ПО ЛР
+--------------------------------------------------------------------------------
+ЛР1: blank_vN.docx + blank_vN.spec.json (TemplateSpec с непустыми
+     roi_fields); PDF опционально (конвертация LibreOffice/Word для
+     печати и визуальной проверки).
+     Веб-генерация работы: для каждого варианта свой spec.json рядом с
+     DOCX (вариант_N/spec.json), общий manifest.json и ZIP, включающий
+     DOCX и spec.json.
+ЛР2: aligned_blank.png (2100x2970, белый фон), edges.png
+ЛР3: template_spec.json, crops/, labels.csv, dataset_manifest.json,
+     split_proof.json (ID -> split, доказательство отсутствия утечек)
+ЛР4: model.keras, best_weights, history.csv (Epoch, Train Loss, Val Loss,
+     Train F1, Val F1), confusion_matrix.png
+ЛР5: model.tflite, benchmark.json (размер до/после, latency до/после,
+     ΔMacro-F1), answer_key.json, grade_report.json
+
+Имена aligned_blank.png и edges.png фиксированы (ТЗ ЛР2).
+Имена остальных — фиксированы этим SKILL.
+Спецификация ЛР1 обязана содержать непустой roi_fields: генератор
+строит его из template_layout.json (roi.table_top_mm, roi.row_height_mm,
+question_columns_mm), а не оставляет заготовкой для ручной разметки.
+
+--------------------------------------------------------------------------------
+15. HANDOFF: СДАЧА ПО ЛР1–ЛР5
+--------------------------------------------------------------------------------
+Источник истины — ТЗ соответствующей ЛР. При конфликте SKILL vs ТЗ
+приоритет у ТЗ, расхождение — в отчёт.
+
+ПЕРЕД СТАРТОМ ЛЮБОЙ ЛР ПОДТВЕРДИТЬ У ПОЛЬЗОВАТЕЛЯ:
+  1) Раскладку ID по углам: 0=TL, 1=TR, 2=BR, version_marker_id=BL
+     (каноническая раскладка SKILL v4/v5). Подтвердить, что версионный
+     маркер стоит именно в левом нижнем углу, а не в правом нижнем.
+  2) marker_size_px и отступ маркеров от края листа (в пикселях 2100x2970).
+  3) rois: генератор заполняет roi_fields автоматически; подтвердить, что
+     ROI совпадают с ячейками ответов (roi.table_top_mm актуален под шапку).
+  4) Алфавит классов (alphabet.json) для ЛР4–ЛР5.
+  5) Есть ли готовые демо-фото под углом (2–3) для регрессии.
+Если раскладка в генераторе другая — синхронизировать corner_by_id или
+перегенерировать шаблон. Не писать код до ответа.
+
+ACCEPTANCE CHECKLIST:
+  ЛР1 (готово): шаблон генерируется; 4 маркера по углам
+    (0=TL, 1=TR, 2=BR, version_marker_id=BL); spec.json содержит
+    непустые roi_fields.
+  ЛР2 (готово, код + Web/API; README/скриншот — на сдачу):
+    [10] README: обоснование Web+CLI, скриншот, структура модулей.
+    [15] cv2.imread -> cvtColor(BGR2GRAY) -> Canny; edges.png сохранён.
+    [25] cv2.aruco.detectMarkers с DICT_4X4_50; ровно 4, уникальные ID,
+         набор == expected_marker_ids; corner_by_id; сообщение при <4.
+    [20] getPerspectiveTransform + warpPerspective; 2100x2970;
+         borderValue=(255,255,255); aligned_blank.png.
+    [15] Автопрогон (CLI) без ручных шагов; exit 2 при <4.
+    [10] aligned_blank.png: только лист, белый фон, 2100x2970,
+         края не обрезаны (или оговорка при centers).
+    [5]  Структура классов/функций видна; декларация в коде и README.
+    Дополнительно: POST /api/align возвращает aligned_image/edges_image
+    (data URL), Web UI показывает превью без второго запроса.
+  ЛР3 (частично готово: ROI и нарезка есть, пачка/манифест — план):
+    [25] ROI содержат символ целиком; padding_px 5–10.
+    [25] template_spec.json отделён от кода; правка JSON меняет нарезку
+         (roi.table_top_mm / row_height_mm / question_columns_mm).
+    [25] Пачка 10+ листов за запуск; структурированные папки.
+    [25] dataset_manifest.json + labels.csv; сплиты по photo_id.
+  ЛР4 (100б):
+    [15] Нет model.fit (поиск по коду).
+    [10] Сплит строго по photo_id, 70/15/15, split_proof.json.
+    [10] tf.data с .batch() и .prefetch(AUTOTUNE).
+    [10] CNN: Conv2D, MaxPooling2D, Dropout, 3 блока, GAP.
+    [13] GradientTape + @tf.function + train_step/val_step.
+    [10] Логирование Loss и Macro-F1; Macro-F1 кастомный.
+    [10] save_weights по лучшему val_f1.
+    [10] confusion_matrix.png на Test.
+    [4]  Тренд loss↓, F1↑.
+    [4]  Метрики выше 1/N.
+    [4]  Разумные гиперпараметры (TrainingConfig).
+  ЛР5 (100б):
+    [20] export_tflite.py, динамическое квантование, benchmark.json.
+    [20] serving/pipeline.py DAG: CV -> Extraction -> ML -> Checker -> Output.
+    [15] checker.py: порог, CORRECT/INCORRECT/NEEDS_REVIEW, балл без
+         NEEDS_REVIEW.
+    [20] Интерфейс (Web+CLI): I/O Efficiency, Thread/Async Isolation,
+         Graceful Degradation.
+    [25] Воспроизводимость (одна команда), агностика конвейера,
+         лёгкость инференса (нет tensorflow в api/serving),
+         E2E (сырое фото -> GradeResult), отказоустойчивость.
+
+ЧТО МОДЕЛЬ НЕ ДЕЛАЕТ:
+  - Не меняет готовый генератор шаблонов.
+  - Не импортирует tensorflow/tensorflow.keras в api и serving.
+  - Не вызывает model.fit нигде.
+  - Не пишет upload на диск (только imdecode в память).
+  - Не изобретает свой API — следует разделу 8.
+  - Не меняет фиксированные имена артефактов.
+  - Не реализует jobs через внешнюю очередь, если достаточно
+    ThreadPoolExecutor (MVP).
+
+--------------------------------------------------------------------------------
+16. ВНЕШНИЕ КОНТРАКТЫ И СОВМЕСТИМОСТЬ С ЧУЖИМ ТЗ/SKILL
+--------------------------------------------------------------------------------
+Пользователь может передавать этот SKILL вместе с ТЗ и SKILL другой
+нейросети. Правила совместимости:
+
+TemplateSpec: формат ЛР3 (template_version, canvas_size, roi_fields
+[id, type, coords]) — обязательный минимум. Расширения (dictionary_id,
+expected_marker_ids, corner_by_id, marker_layout, marker_size_px,
+padding_px, confidence_threshold) аддитивны; отсутствие расширений —
+дефолты из раздела 6.
+roi_fields обязателен и непуст: если у чужой спеки roi_fields пуст,
+нарезка невозможна — это ошибка конфигурации.
+
+Устаревший формат спеки (template_id, version, rois, created_at) не
+поддерживается: такие файлы нужно перегенерировать текущим генератором
+(DOCX + TemplateSpec). Автоматическая миграция не выполняется, чтобы не
+угадывать геометрию; при загрузке старой спеки — понятная ошибка.
+
+AnswerKey: отдельный файл; field_id == roi_fields[].id. Если чужой ТЗ
+использует другую структуру — адаптер в serving/answer_key.py;
+при несовпадении — AnswerKeyMismatchError с понятным сообщением и
+списком отсутствующих/лишних id.
+
+Settings: единый источник для Web/CLI/API. Чужие CLI-флаги маппятся
+на поля Settings в cli.py; приоритет: CLI-флаг > Settings > дефолт.
+
+Имена артефактов: aligned_blank.png, edges.png — из ТЗ ЛР2, не менять.
+Остальные имена — из раздела 14; при интеграции с чужим ТЗ, где имена
+другие, — маппинг в serving, имена на диске не переименовывать без
+согласования.
+
+Алфавит классов (alphabet.json): N классов, порядок фиксирован;
+index -> label однозначно. Чужой ТЗ, где порядок другой, — пересобрать
+alphabet.json и переобучить/переэкспортировать модель; иначе
+предсказания будут неверны.
+
+Если чужой SKILL/ТЗ противоречит разделам 3, 4, 12 (инварианты: нет
+tensorflow в api/serving, нет model.fit, DAG-оркестратор, типизированные
+ошибки) — приоритет у этого SKILL, расхождение — в отчёт.
+
+--------------------------------------------------------------------------------
+17. СТАТУС И СЛЕДУЮЩИЙ ШАГ
+--------------------------------------------------------------------------------
+ЛР1: ГОТОВО. Генератор DOCX + TemplateSpec, каноническая раскладка
+     маркеров (0=TL, 1=TR, 2=BR, version_marker_id=BL), авто-ROI,
+     Demo-бланки output/blank_v1|blank_v2|blank3 (DOCX + spec.json + PDF).
+ЛР2: ГОТОВО (код). core/schemas.py, core/config.py, normalizer/*,
+     api/routes/align.py, cli.py; POST /api/align отдаёт data URL,
+     Web UI показывает выровненный бланк и Canny.
+ЛР3: ЧАСТИЧНО ГОТОВО. Есть roi/*, dataset/*, CLI extract/build-dataset,
+     авто-ROI из layout, нарезка по spec.json. Осталось: пачка 10+
+     листов за запуск, dataset_manifest.json/labels.csv, полный
+     split_proof.json по photo_id.
+ЛР4: НЕ НАЧАТО. Нужно создать app/training/*, CLI train, trainer-образ.
+ЛР5: НЕ НАЧАТО. Нужно создать app/export/*, app/serving/*, CLI
+     grade/settings/serve, api/routes/grade, jobs, settings; вкладку
+     «Настройки».
+
+Порядок реализации — строго по ЛР; не начинать следующую, пока предыдущая
+не проходит свой acceptance checklist.
+
+--------------------------------------------------------------------------------
+18. СТИЛЬ ОБЩЕНИЯ
+--------------------------------------------------------------------------------
+Сначала архитектура и контракты, потом код.
+Отвечай по-русски, конкретно, без воды.
+При неоднозначности — 2–3 варианта с плюсами/минусами и рекомендацией.
+Не переизобретай зафиксированные решения; отклонение — обоснуй.
+
+--------------------------------------------------------------------------------
+19. ЖУРНАЛ ИЗМЕНЕНИЙ (v5)
+--------------------------------------------------------------------------------
+v5 — синхронизация документа с фактическим кодом после четырёх исправлений:
+
+1) Каноническая раскладка ArUco-маркеров.
+   Принято: 0=TL, 1=TR, 2=BR, version_marker_id=BL (ранее в коде
+   встречалось 2=BL / version=BR). Добавлена единая функция
+   resolve_marker_ids() в template/generator.py; её используют и
+   генератор спеки, и рендерер DOCX. Дублирование раскладки запрещено.
+   Перегенерированы output/blank_v1|blank_v2|blank3 и пример работы.
+
+2) Автоматические ROI.
+   Добавлены build_roi_fields() и секция roi в template_layout.json
+   (table_top_mm, row_height_mm, padding_px). Рендерер ставит таблицу
+   абсолютно (w:tblpPr), задаёт фиксированную сетку колонок и точную
+   высоту строки, обнуляет отступы ячеек — координаты roi_fields
+   совпадают с ячейками DOCX. В спецификациях появились qN_answer.
+
+3) Миграция старых спек.
+   output/blank_v1.spec.json, blank_v2.spec.json, blank3.spec.json
+   переведены в текущий TemplateSpec (template_version, corner_by_id,
+   непустые roi_fields). Demo-работы перегенерированы с вариантами
+   spec.json.
+
+4) Починка нормализации (API + Web).
+   Удалён синтаксически неверный комментарий в static/js/align.js;
+   POST /api/align возвращает aligned_image/edges_image (PNG data URL);
+   NormalizerService.align принимает путь/bytes/np.ndarray и сам
+   вызывает read_image; устранён UnboundLocalError при отключённом
+   сохранении артефактов. Добавлен pytest.ini (testpaths = tests).
+
+5) API извлечения полей ответов (ЛР3).
+   POST /api/extract возвращает по одному base64 data URL на каждое
+   roi_field (crop_image), плюс coords и size. На странице /align
+   добавлена кнопка «Извлечь поля ответов» и возможность загрузить
+   spec.json через диалог выбора файла (кроме ввода ID вручную).
+   Исправлен парсер CSV: кавычки вокруг answer_type теперь удаляются,
+   поэтому банк из 100 вопросов (bank.csv) парсится без ошибок.
+
+Проверка v5: python -m pytest -q -> 44 passed.
+================================================================================

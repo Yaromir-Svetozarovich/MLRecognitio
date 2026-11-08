@@ -1,0 +1,22 @@
+{
+  "page": {"width_mm": 210, "height_mm": 297, "dpi": 300},
+  "margins": {"top_mm": 32, "bottom_mm": 32, "left_mm": 15, "right_mm": 15},
+  "markers": {
+    "size_mm": 15,
+    "quiet_zone_mm": 5,
+    "dict": "DICT_4X4_50",
+    "ids": {"TL": 0, "TR": 1, "BR": 2},
+    "positions": {
+      "TL": {"x_mm": 5, "y_mm": 5},
+      "TR": {"x_mm": 180, "y_mm": 5},
+      "BL": {"x_mm": 5, "y_mm": 267},
+      "BR": {"x_mm": 180, "y_mm": 267}
+    }
+  },
+  "question_columns_mm": [12, 112, 56],
+  "roi": {
+    "table_top_mm": 78,
+    "row_height_mm": 7,
+    "padding_px": 5
+  }
+}
