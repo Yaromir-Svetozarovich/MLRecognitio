@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Главная — Blank Aligner{% endblock %}
+{% block content %}
+<div class="hero">
+    <h1>Blank Aligner</h1>
+    <p class="subtitle">Система нормализации и распознавания A4-бланков по ArUco-маркерам</p>
+</div>
+
+<div class="card-grid">
+    <div class="card">
+        <h2>Шаблоны</h2>
+        <p>Создание и просмотр A4-бланков с ArUco-маркерами и полями ответов.</p>
+        <a href="/templates" class="btn">Открыть</a>
+    </div>
+    <div class="card">
+        <h2>Нормализация</h2>
+        <p>Загрузите фото заполненного бланка — система выровняет его в 2100×2970 и построит карту границ.</p>
+        <a href="/align" class="btn">Загрузить фото</a>
+    </div>
+    <div class="card">
+        <h2>Статус системы</h2>
+        <p>Проверка работоспособности API и конфигурации.</p>
+        <a href="/health" class="btn">Проверить</a>
+    </div>
+</div>
+
+<div class="info-section">
+    <h2>Сквозной сценарий</h2>
+    <ol class="pipeline-steps">
+        <li>Сгенерировать шаблон (генератор готов, CLI)</li>
+        <li>Распечатать и заполнить бланк</li>
+        <li>Сфотографировать или отсканировать</li>
+        <li>Загрузить фото → нормализация (выравнивание по ArUco)</li>
+        <li>Нарезка ROI → обучение CNN → TFLite (в разработке)</li>
+        <li>Проверка ответов (Checker → CORRECT / INCORRECT / NEEDS_REVIEW)</li>
+    </ol>
+</div>
+{% endblock %}
