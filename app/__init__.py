@@ -1,1 +1,9 @@
-"""Core layer: schemas, config, errors, geometry, storage."""
+"""Приложение Blank Aligner — генератор шаблонов, нормализатор, распознаватель.
+
+Пакет app содержит все домены системы:
+  - app.core       — общие схемы, конфиг, ошибки, геометрия, хранилище
+  - app.template   — генератор бланков DOCX + TemplateSpec (ЛР1, ГОТОВО)
+  - app.normalizer — CV-узел нормализации фото бланка (ЛР2)
+  - app.api        — FastAPI Web-интерфейс
+  - app.cli        — тонкий CLI-адаптер для автоматизации
+"""
