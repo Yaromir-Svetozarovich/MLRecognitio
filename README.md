@@ -39,10 +39,14 @@ app/
   api/            FastAPI: main.py, routes/{templates,align,extract}.py,
                   deps.py, static/, templates/
   cli.py          CLI-адаптер: align, extract, build-dataset, train
-infra/            Docker: Dockerfile.api, Dockerfile.trainer, docker-compose.yml
+infra/            Docker: Dockerfile.api, Dockerfile.trainer, Dockerfile.ui,
+                  docker-compose.yml
 tests/            pytest (тесты ЛР1–ЛР4)
+ui-prototype/     Современный веб-интерфейс (index.html, templates.html,
+                  align.html, CSS, JS)
 alphabet.json     алфавит: 69 классов (A-Z, А-Я, 0-9) для рукописных символов
 build_dataset.py  скрипт сплита датасета по photo_id
+kaggle_importer.py/ ког imports из Kaggie датасета constantinwerner/cyrillic-handwriting-dataset
 SKILL.txt         спецификация проекта (версия 5)
 template_layout.json  разметка шаблона (маркеры, ROI, колонки)
 content_v*.json   контент для генерации бланков
@@ -71,6 +75,15 @@ docker compose -f infra/docker-compose.yml up -d api
 ```
 
 Веб-интерфейс будет доступен по адресу: `http://localhost:8000`
+
+#### UI прототип (современный интерфейс)
+
+```bash
+docker build -t infra-ui -f infra/Dockerfile.ui .
+docker run -d --name infra-ui -p 8081:80 infra-ui
+```
+
+Веб-интерфейс будет доступен по адресу: `http://localhost:8081`
 
 #### Обучение CNN с GPU (через WSL2 + NVIDIA Docker)
 
@@ -128,6 +141,12 @@ python -m app.cli train --dataset-dir <dir> --output-dir <out> --alphabet alphab
 - `history.csv` — лог обучения
 - `confusion_matrix.png` — матрица ошибок
 
+Для построения датасета используйте `build_dataset.py`:
+
+```bash
+python build_dataset.py --crops-dir <dir> --labels <labels.csv> --output-dir <out> --ratios 0.70 0.15 0.15 --seed 42
+```
+
 ## CLI команды
 
 ```bash
@@ -179,6 +198,7 @@ python -m pytest -q
 - **Нет TensorFlow в api/serving** — trainer lives only in offline image.
 - **Сплит строго по photo_id** — защита от утечек данных между train/val/test.
 - **Macro-F1** — кастомная метрика вместо простой Accuracy.
+- **question_order** в spec.json — сохраняет порядок вопросов на бланке для корректной проверки ответов.
 
 ## Требования
 
