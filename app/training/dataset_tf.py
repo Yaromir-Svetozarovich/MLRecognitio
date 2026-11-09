@@ -9,9 +9,10 @@ tf.data.Dataset с batch() и prefetch(AUTOTUNE), разделяет по photo_
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -27,9 +28,7 @@ def load_split_proof(dataset_dir: Path) -> dict:
 
 def load_labels(labels_path: Path) -> dict:
     """Загрузить labels.csv в словарь {crop_filename: label}."""
-    import csv
-
-    labels = {}
+    labels: dict = {}
     with open(labels_path, encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -59,7 +58,7 @@ def make_tf_dataset(
     """Создать tf.data.Dataset для данного сплита.
 
     Читает:
-      - dataset_dir/crops/<photo_id>_<field_id>.png
+      - dataset_dir/<split>/<photo_id>_<label>.png
       - dataset_dir/labels.csv (crop_filename, label, photo_id, split)
       - dataset_dir/split_proof.json (photo_id -> split)
 
@@ -84,9 +83,12 @@ def make_tf_dataset(
 
     dataset_dir = Path(dataset_dir)
 
-    # Загружаем split_proof: photo_id -> split
+    # Загружаем split_proof: photo_id -> split_name
     split_proof = load_split_proof(dataset_dir)
-    photo_ids_for_split = split_proof.get(split, [])
+    # Фильтруем photo_id по текущему сплиту
+    photo_ids_for_split = [
+        pid for pid, s in split_proof.items() if s == split
+    ]
     if not photo_ids_for_split:
         raise ValueError(f"Нет photo_id для сплита '{split}' в split_proof.json")
 
@@ -97,17 +99,18 @@ def make_tf_dataset(
     labels_map = load_labels(labels_path)
 
     # Собираем файлы и метки для данного сплита
-    crops_dir = dataset_dir / "crops"
-    file_paths = []
-    label_values = []
-    label_to_index = {}  # будет заполнено из alphabet при необходимости
+    # Файлы лежат в подпапке dataset_dir/<split>/
+    split_dir = dataset_dir / split
+    file_paths: List[str] = []
+    label_values: List[int] = []
+    label_to_index: Dict[str, int] = {}
 
     # Собираем уникальные метки для кодирования
     unique_labels = sorted(set(labels_map.values()))
     label_to_index = {lbl: i for i, lbl in enumerate(unique_labels)}
 
     for photo_id in photo_ids_for_split:
-        for crop_file in sorted(crops_dir.glob(f"{photo_id}_*.png")):
+        for crop_file in sorted(split_dir.glob(f"{photo_id}_*.png")):
             crop_name = crop_file.name
             if crop_name in labels_map:
                 file_paths.append(str(crop_file))

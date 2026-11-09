@@ -51,7 +51,7 @@ questions.csv     банк вопросов
 
 ## Быстрый старт
 
-### Вариант 1: Через setup.bat (Windows)
+### Установка (Windows)
 
 1. Склонируйте репозиторий.
 2. Запустите `setup.bat` — он проверит Python, обновит pip, установит зависимости из `requirements.txt` и проверит импорты.
@@ -61,9 +61,9 @@ questions.csv     банк вопросов
 setup.bat
 ```
 
-### Вариант 2: Через Docker
+### Запуск через Docker
 
-Сборка и запуск только API-контейнера (без TensorFlow, лёгкий):
+#### API (лёгкий, без TensorFlow)
 
 ```bash
 docker compose -f infra/docker-compose.yml build api
@@ -72,11 +72,23 @@ docker compose -f infra/docker-compose.yml up -d api
 
 Веб-интерфейс будет доступен по адресу: `http://localhost:8000`
 
-Для обучения модели (требует TensorFlow) используйте отдельный образ trainer:
+#### Обучение CNN с GPU (через WSL2 + NVIDIA Docker)
+
+Если у вас WSL2 и NVIDIA GPU, используйте образ trainer с поддержкой CUDA:
 
 ```bash
-docker compose -f infra/docker-compose.yml --profile trainer up trainer
+# Собрать образ trainer с CUDA
+docker compose -f infra/docker-compose.yml build trainer
+
+# Запустить обучение с поддержкой GPU
+docker compose -f infra/docker-compose.yml --profile trainer run --rm trainer \
+  train --dataset-dir /data/dataset --output-dir /data/output/training \
+  --alphabet /app/alphabet.json --epochs 30 --batch-size 32
 ```
+
+Перед запуском убедитесь, что в Docker Desktop включена поддержка WSL2 и NVIDIA GPU:
+- Settings → Resources → WSL Integration → включить ваш дистрибутив WSL2
+- Settings → General → "Use WSL 2 based engine" должен быть включен
 
 ## Что сделать после запуска
 
@@ -102,6 +114,20 @@ python generate_blank.py --layout template_layout.json --content content_v1.json
 
 После нормализации нажмите **«Извлечь поля ответов»** — система нарежет ROI-поля (q1_answer, q2_answer, ...) и покажет каждую как картинку с координатами.
 
+## Обучение CNN (ЛР4)
+
+Код обучения написан и находится в `app/training/`. Для запуска обучения требуется установленный TensorFlow:
+
+```bash
+python -m app.cli train --dataset-dir <dir> --output-dir <out> --alphabet alphabet.json --epochs 30 --batch-size 32
+```
+
+Результаты обучения сохранятся в указанной папке:
+- `model.keras` — обученная модель
+- `best_weights.weights.h5` — лучшие веса по val_f1
+- `history.csv` — лог обучения
+- `confusion_matrix.png` — матрица ошибок
+
 ## CLI команды
 
 ```bash
@@ -123,8 +149,6 @@ python build_dataset.py --crops-dir <dir> --labels <labels.csv> --output-dir <ou
 
 Exit codes: `0` — успех, `2` — доменная ошибка, `3` — I/O, `4` — ошибка обучения.
 
----
-
 ## Тесты
 
 ```bash
@@ -132,8 +156,6 @@ python -m pytest -q
 ```
 
 Ожидаемый результат: все тесты проходят. Тесты, требующие TensorFlow, пропускаются автоматически, если он не установлен.
-
----
 
 ## API (FastAPI)
 
@@ -148,8 +170,6 @@ python -m pytest -q
 | POST | `/api/templates/generate-work` | CSV + layout -> варианты DOCX + spec.json + ZIP |
 | GET | `/api/templates/{id}/docx` | Скачать DOCX шаблона |
 
----
-
 ## Архитектурные решения (SKILL v5)
 
 - **Каноническая раскладка маркеров:** `0 → TL`, `1 → TR`, `2 → BR`, `version_marker_id → BL`. Единственная точка истины — `resolve_marker_ids()` в `template/generator.py`.
@@ -160,14 +180,11 @@ python -m pytest -q
 - **Сплит строго по photo_id** — защита от утечек данных между train/val/test.
 - **Macro-F1** — кастомная метрика вместо простой Accuracy.
 
----
 ## Требования
 
 - Python 3.11+
 - opencv-contrib-python, fastapi, uvicorn, pydantic, jinja2, python-multipart, pytest, httpx
-- TensorFlow >=2.16,<3 (только для обучения, образ trainer)
-
----
+- TensorFlow >=2.16,<3 (только для обучения)
 
 ## Лицензия
 

@@ -26,7 +26,7 @@ from app.training.train_loop import fit_loop, evaluate_on_test
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="app.training.train", help="Обучить CNN (ЛР4)")
+    parser = argparse.ArgumentParser(prog="app.training.train")
     parser.add_argument("--dataset-dir", required=True, help="Директория датасета (с crops/, labels.csv, split_proof.json)")
     parser.add_argument("--output-dir", required=True, help="Куда сохранять модель и артефакты")
     parser.add_argument("--alphabet", default="alphabet.json", help="Путь к alphabet.json")

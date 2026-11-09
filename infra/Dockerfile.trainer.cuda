@@ -1,0 +1,42 @@
+FROM nvidia/cuda:10.2-cudnn7-runtime-ubuntu18.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.8 \
+    python3-pip \
+    python3-venv \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt tensorflow==2.11.0
+
+COPY app ./app
+COPY generate_blank.py ./generate_blank.py
+COPY template_layout.json ./template_layout.json
+COPY content_v1.json ./content_v1.json
+COPY content_v2.json ./content_v2.json
+COPY content_v3.json ./content_v3.json
+COPY questions.csv ./questions.csv
+COPY alphabet.json ./alphabet.json
+COPY build_dataset.py ./build_dataset.py
+
+RUN mkdir -p /data/templates /data/jobs /data/models /data/output /data/dataset
+
+ENV DATA_DIR=/data
+ENV TEMPLATES_DIR=/data/templates
+ENV JOBS_DIR=/data/jobs
+ENV MODELS_DIR=/data/models
+ENV LOG_LEVEL=INFO
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+
+ENTRYPOINT ["python3", "-m", "app.cli"]
+CMD ["--help"]

@@ -13,9 +13,16 @@ services:
   trainer:
     build:
       context: ..
-      dockerfile: infra/Dockerfile.trainer
+      dockerfile: infra/Dockerfile.trainer.cuda
     volumes:
       - app_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     profiles:
       - trainer
 
