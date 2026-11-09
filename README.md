@@ -154,39 +154,6 @@ docker compose -f infra/docker-compose.yml --profile trainer up trainer
 
 ---
 
-## Как залить на GitHub
-
-```powershell
-# 1. Инициализировать репозиторий (если ещё не сделано)
-git init
-git add .
-git commit -m "Начальная версия"
-
-# 2. Привязать к вашему репозиторию на GitHub
-git remote add origin https://github.com/ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ.git
-git branch -M main
-
-# 3. Запушить
-git push -u origin main
-```
-
-Если Git запрашивает логин/пароль — используйте **Personal Access Token** (не пароль от аккаунта):
-- Создать токен: https://github.com/settings/tokens/new (права `repo`)
-- При запросе пароля вставить токен.
-
-### Если ветки разные истории (`main` и `newtest` без общего предка):
-
-```powershell
-git checkout main
-git pull origin main
-git merge newtest --allow-unrelated-histories
-# при конфликтах исправить файлы, затем:
-git add .
-git commit -m "Merge newtest into main"
-git push origin main
-```
-
----
 
 ## Требования
 
