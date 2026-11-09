@@ -6,11 +6,13 @@ Commands:
   align          — normalize a blank photo (ЛР2)
   extract        — extract ROI crops from an aligned image (ЛР3)
   build-dataset  — assemble crops, labels, manifest (ЛР3)
+  train          — train CNN classifier (ЛР4)
 
 Exit codes per SKILL v4 §14:
   0 — success
   2 — domain error
   3 — I/O error
+  4 — training/export error
 No traceback is ever printed to stdout.
 """
 
@@ -33,6 +35,7 @@ from app.roi.extractor import extract_crops
 from app.roi.spec_loader import load_template_spec
 from app.dataset.builder import build_dataset
 from app.dataset.splits import split_photo_ids
+from app.training.train import main as train_main
 
 
 def _load_template_spec(template_arg, config):
@@ -198,6 +201,23 @@ def cmd_build_dataset(args):
     return 0
 
 
+def cmd_train(args):
+    """Handle the `train` subcommand: train CNN classifier (ЛР4)."""
+    argv = [
+        "--dataset-dir", args.dataset_dir,
+        "--output-dir", args.output_dir,
+        "--alphabet", args.alphabet,
+        "--epochs", str(args.epochs),
+        "--batch-size", str(args.batch_size),
+        "--learning-rate", str(args.learning_rate),
+        "--input-height", str(args.input_height),
+        "--input-width", str(args.input_width),
+    ]
+    if args.json:
+        argv.append("--json")
+    return train_main(argv)
+
+
 def main(argv=None):
     """Parse CLI arguments and dispatch to the appropriate subcommand."""
     parser = argparse.ArgumentParser(prog="app.cli")
@@ -235,6 +255,19 @@ def main(argv=None):
     p_build.add_argument("--split", default="train", choices=["train", "val", "test"], help="Split label")
     p_build.add_argument("--json", action="store_true", help="JSON output")
     p_build.set_defaults(func=cmd_build_dataset)
+
+    # train
+    p_train = sub.add_parser("train", help="Train CNN classifier (ЛР4)")
+    p_train.add_argument("--dataset-dir", required=True, help="Dataset directory (crops/, labels.csv, split_proof.json)")
+    p_train.add_argument("--output-dir", required=True, help="Output directory for model and artifacts")
+    p_train.add_argument("--alphabet", default="alphabet.json", help="Path to alphabet.json")
+    p_train.add_argument("--epochs", type=int, default=30, help="Number of epochs")
+    p_train.add_argument("--batch-size", type=int, default=32, help="Batch size")
+    p_train.add_argument("--learning-rate", type=float, default=0.001, help="Learning rate")
+    p_train.add_argument("--input-height", type=int, default=64, help="Input image height")
+    p_train.add_argument("--input-width", type=int, default=128, help="Input image width")
+    p_train.add_argument("--json", action="store_true", help="JSON output")
+    p_train.set_defaults(func=cmd_train)
 
     args = parser.parse_args(argv)
     return args.func(args)

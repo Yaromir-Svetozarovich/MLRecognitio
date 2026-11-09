@@ -500,10 +500,16 @@ Unit [реализовано]:
     extract_crops по roi_fields).
   dataset: splits (photo_id 70/15/15, отсутствие утечек, split_proof.json).
 
-Unit [план, ЛР4–ЛР5]:
-  training: model (Conv/Pool/Dropout/GAP, 3 блока), metrics (Macro-F1,
-    confusion matrix), train_loop (есть @tf.function, нет model.fit —
-    поиск по коду).
+Unit [реализовано, ждет TensorFlow]:
+  training: model.py (CNN: Conv2D/MaxPooling/Dropout/GAP, 3 блока),
+    metrics.py (Macro-F1 через confusion_matrix), train_loop.py
+    (tf.GradientTape, train_step/val_step, нет model.fit),
+    dataset_tf.py (tf.data.Dataset с batch/prefetch),
+    train.py (точка входа), cli.py train, build_dataset.py (сплит по photo_id).
+    Тесты: tests/test_training.py (пропускаются без TensorFlow).
+  dataset: splits (photo_id 70/15/15, отсутствие утечек, split_proof.json).
+
+Unit [план, ЛР5]:
   export: export_tflite (файл создан, размер уменьшился, benchmark.json).
   serving: checker (порог, 3 статуса, балл без NEEDS_REVIEW),
     tflite_runner (pool_size, invoke), pipeline (Fail-Fast, DAG-порядок,
@@ -678,7 +684,14 @@ tensorflow в api/serving, нет model.fit, DAG-оркестратор, тип�
      авто-ROI из layout, нарезка по spec.json. Осталось: пачка 10+
      листов за запуск, dataset_manifest.json/labels.csv, полный
      split_proof.json по photo_id.
-ЛР4: НЕ НАЧАТО. Нужно создать app/training/*, CLI train, trainer-образ.
+ЛР4: В РАЗРАБОТКЕ (код готов, ждет TensorFlow + реальные данные).
+     app/training/* создан: config.py, model.py (CNN 3 блока Conv/Pool/Dropout/GAP),
+     dataset_tf.py (tf.data.Dataset batch/prefetch), metrics.py (Macro-F1),
+     train_loop.py (tf.GradientTape, train_step/val_step, нет model.fit),
+     train.py (точка входа), build_dataset.py (сплит по photo_id),
+     cli.py train, alphabet.json (69 классов: A-Z, А-Я, 0-9).
+     Осталось: установить TensorFlow, собрать реальные размеченные crops,
+     запустить обучение, получить confusion_matrix.png.
 ЛР5: НЕ НАЧАТО. Нужно создать app/export/*, app/serving/*, CLI
      grade/settings/serve, api/routes/grade, jobs, settings; вкладку
      «Настройки».
@@ -734,5 +747,16 @@ v5 — синхронизация документа с фактическим �
    Исправлен парсер CSV: кавычки вокруг answer_type теперь удаляются,
    поэтому банк из 100 вопросов (bank.csv) парсится без ошибок.
 
-Проверка v5: python -m pytest -q -> 44 passed.
+6) Обучение CNN (ЛР4).
+   Создан пакет app/training/: config.py, model.py (CNN через Keras
+   Functional API: 3x Conv2D+MaxPooling2D 32→64→128, GlobalAveragePooling2D,
+   Dropout(0.5), Dense softmax), dataset_tf.py (tf.data.Dataset с batch(32)
+   и prefetch(AUTOTUNE), сплит по photo_id), metrics.py (кастомный Macro-F1
+   через tf.math.confusion_matrix), train_loop.py (tf.GradientTape,
+   train_step/val_step, модель.fit ЗАПРЕЩЁН), train.py (точка входа),
+   cli.py train, build_dataset.py (самостоятельный скрипт сплита по photo_id).
+   alphabet.json: 69 классов (A-Z, А-Я, 0-9) для рукописных символов.
+   Тесты: tests/test_training.py (пропускаются без TensorFlow).
+
+Проверка v5: python -m pytest -q -> 41 passed, 4 skipped (без TensorFlow).
 ================================================================================
