@@ -171,6 +171,7 @@ def generate_work(
     questions_csv: UploadFile = File(...),
     work_name: str = Form(...),
     num_variants: int = Form(4),
+    num_questions: int | None = Form(None),
     save_location: str = Form("templates"),
     copies_mode: str = Form("all"),
     copies_all: int = Form(1),
@@ -195,6 +196,11 @@ def generate_work(
             status_code=422,
             detail={"code": "ValidationError", "message": "version_marker_id must be 3..49"},
         )
+    if num_questions is not None and num_questions < 1:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "ValidationError", "message": "num_questions must be >= 1"},
+        )
 
     layout_raw = layout_file.file.read()
     try:
@@ -212,6 +218,30 @@ def generate_work(
         raise HTTPException(
             status_code=400,
             detail={"code": "ValidationError", "message": f"CSV is not valid UTF-8: {e}"},
+        )
+
+    # Quick check how many questions are available in the bank
+    from app.template.generator import parse_csv_questions
+    try:
+        available_questions = parse_csv_questions(csv_text, num_questions=None)
+        bank_count = len(available_questions)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "ValidationError", "message": f"Invalid questions CSV: {e}"},
+        )
+
+    if num_questions is not None and num_questions > bank_count:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "NotEnoughQuestions",
+                "message": f"Not enough questions in bank: requested {num_questions}, available {bank_count}",
+                "details": {
+                    "requested": num_questions,
+                    "available": bank_count,
+                },
+            },
         )
 
     from app.core.errors import DomainError
@@ -254,6 +284,7 @@ def generate_work(
                 instruction=instruction,
                 version=version,
                 version_marker_id=version_marker_id + variant_idx - 1,
+                num_questions=num_questions,
             )
         except DomainError as e:
             raise HTTPException(

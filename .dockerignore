@@ -18,3 +18,6 @@ run.bat
 synth_*.py
 test_generate_work_fixed.py
 regen_work.py
+
+# Большие файлы данных
+cyrillic-handwriting-dataset.zip

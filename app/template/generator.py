@@ -40,6 +40,13 @@ ROI_TYPE_BY_ANSWER = {
     "sentence": "handwriting",
 }
 
+# Фиксированная высота шапки бланка в мм (заголовок + автор + инструкция + отступы).
+HEADER_HEIGHT_MM = 45.0
+# Минимально допустимая высота строки таблицы в мм.
+MIN_ROW_HEIGHT_MM = 6.0
+# Отступ перед таблицей после шапки в мм.
+TABLE_GAP_MM = 5.0
+
 
 def resolve_marker_ids(layout: Dict[str, Any], content: Dict[str, Any]) -> Dict[str, int]:
     """Return the physical marker ID for each page corner.
@@ -59,7 +66,66 @@ def resolve_marker_ids(layout: Dict[str, Any], content: Dict[str, Any]) -> Dict[
     }
 
 
-def build_roi_fields(layout: Dict[str, Any], content: Dict[str, Any]) -> List[RoiField]:
+def compute_available_height_mm(layout: Dict[str, Any]) -> float:
+    """Вычислить доступную высоту для таблицы вопросов в мм.
+
+    Берёт высоту страницы и вычитает верхний/нижний отступы, высоту шапки
+    и отступ перед таблицей. Остальное место отдаётся под строки таблицы.
+    """
+    page = layout["page"]
+    margins = layout.get("margins", {})
+    page_height_mm = float(page["height_mm"])
+    top_margin_mm = float(margins.get("top_mm", 32))
+    bottom_margin_mm = float(margins.get("bottom_mm", 32))
+    available = (
+        page_height_mm
+        - top_margin_mm
+        - bottom_margin_mm
+        - HEADER_HEIGHT_MM
+        - TABLE_GAP_MM
+    )
+    return available
+
+
+def compute_row_height_mm(layout: Dict[str, Any], num_questions: int) -> float:
+    """Вычислить высоту строки таблицы в мм так, чтобы влезло N вопросов.
+
+    Использует всё доступное пространство равномерно. Если получится меньше
+    MIN_ROW_HEIGHT_MM — возвращает MIN_ROW_HEIGHT_MM (вызывающая сторона
+    должна sama проверить и выдать ошибку).
+    """
+    available = compute_available_height_mm(layout)
+    row_height = available / num_questions
+    return max(row_height, MIN_ROW_HEIGHT_MM)
+
+
+def check_table_width_mm(layout: Dict[str, Any]) -> None:
+    """Проверить, что таблица с заданными колонками влезет по ширине листа."""
+    page = layout["page"]
+    margins = layout.get("margins", {})
+    columns = layout.get("question_columns_mm") or [12, 112, 56]
+    page_width_mm = float(page["width_mm"])
+    left_margin_mm = float(margins.get("left_mm", 15))
+    right_margin_mm = float(margins.get("right_mm", 15))
+    total_width_mm = left_margin_mm + sum(columns) + right_margin_mm
+    if total_width_mm > page_width_mm:
+        raise ValidationError(
+            "Table width exceeds page width",
+            {
+                "table_width_mm": total_width_mm,
+                "page_width_mm": page_width_mm,
+                "message": f"Table ({total_width_mm} mm) is wider than page ({page_width_mm} mm). "
+                           f"Reduce question_columns_mm or margins.",
+            },
+        )
+
+
+def build_roi_fields(
+    layout: Dict[str, Any],
+    content: Dict[str, Any],
+    row_height_mm: float | None = None,
+    question_order: List[int] | None = None,
+) -> tuple[List[RoiField], List[int]]:
     """Build answer-field ROIs from the same geometry the renderer uses.
 
     The questions table is positioned at ``layout.roi.table_top_mm`` (floating
@@ -70,10 +136,24 @@ def build_roi_fields(layout: Dict[str, Any], content: Dict[str, Any]) -> List[Ro
     Editing ``template_layout.json`` (``roi.table_top_mm`` /
     ``roi.row_height_mm`` / ``question_columns_mm``) changes both the rendered
     table and the resulting crops, as required by ЛР3.
+
+    Args:
+        layout: parsed template_layout.json.
+        content: parsed content dict with questions list.
+        row_height_mm: fixed row height in mm. If None, computed automatically.
+        question_order: original question numbers in the order they appear
+            on the sheet. If None, uses sequential 1..N.
+
+    Returns:
+        Tuple of (list of RoiField, question_order list).
     """
     roi_cfg = layout.get("roi") or {}
     table_top_mm = float(roi_cfg.get("table_top_mm", 78))
-    row_height_mm = float(roi_cfg.get("row_height_mm", 7))
+    if row_height_mm is None:
+        # Use fixed value from layout if present, otherwise auto-compute
+        row_height_mm = float(roi_cfg.get("row_height_mm") or 0)
+        if row_height_mm <= 0:
+            row_height_mm = compute_row_height_mm(layout, len(content["questions"]))
     columns = layout.get("question_columns_mm") or [12, 112, 56]
     left_mm = float(layout.get("margins", {}).get("left_mm", 15))
 
@@ -96,17 +176,23 @@ def build_roi_fields(layout: Dict[str, Any], content: Dict[str, Any]) -> List[Ro
                 coords=coords,
             )
         )
-    return fields
+
+    if question_order is None:
+        question_order = [q["num"] for q in content["questions"]]
+
+    return fields, question_order
 
 
-def parse_csv_questions(csv_text: str, min_questions: int = 15, max_questions: int = 20) -> List[Dict[str, Any]]:
+def parse_csv_questions(
+    csv_text: str,
+    min_questions: int = 15,
+    max_questions: int = 20,
+    num_questions: int | None = None,
+) -> List[Dict[str, Any]]:
     """Parse a CSV with questions and return a validated list of question dicts.
 
     Expected CSV columns: num, text, answer_type.
     answer_type must be one of: letter, digit, number, word, sentence.
-
-    Randomly selects min_questions..max_questions questions so that all 5
-    answer types are represented at least once (balanced variant).
 
     The parser is tolerant of commas inside question text: if a field is not
     quoted, it assumes the last comma separates the answer_type and everything
@@ -116,13 +202,15 @@ def parse_csv_questions(csv_text: str, min_questions: int = 15, max_questions: i
         csv_text: raw CSV text (UTF-8).
         min_questions: minimum number of questions in the variant.
         max_questions: maximum number of questions in the variant.
+        num_questions: if set, exactly this many questions are selected
+            (must be <= available questions in bank).
 
     Returns:
         List of question dicts with keys: num, text, answer_type.
 
     Raises:
         ValidationError: if CSV is malformed, missing columns, or cannot build
-            a balanced variant.
+            a balanced variant, or num_questions exceeds available questions.
     """
     lines = [ln for ln in csv_text.splitlines() if ln.strip()]
     if not lines:
@@ -164,6 +252,20 @@ def parse_csv_questions(csv_text: str, min_questions: int = 15, max_questions: i
     if not rows:
         raise ValidationError("CSV contains no valid questions")
 
+    # If num_questions is specified, validate against available count
+    if num_questions is not None:
+        if num_questions < 1:
+            raise ValidationError("num_questions must be >= 1")
+        if num_questions > len(rows):
+            raise ValidationError(
+                f"Not enough questions in bank: requested {num_questions}, "
+                f"available {len(rows)}",
+                {
+                    "requested": num_questions,
+                    "available": len(rows),
+                },
+            )
+
     # Balanced variant: guarantee all 5 types, then fill randomly
     by_type: Dict[str, List[Dict[str, Any]]] = {t: [] for t in ALLOWED_ANSWER_TYPES}
     for q in rows:
@@ -180,22 +282,27 @@ def parse_csv_questions(csv_text: str, min_questions: int = 15, max_questions: i
     chosen: List[Dict[str, Any]] = []
     used_indices: set[int] = set()
 
-    # 1) Take one random question of each type
+    # 1) Take one random question of each type (guarantee all types present)
     for t in ALLOWED_ANSWER_TYPES:
         pool = by_type[t]
         q = rng.choice(pool)
         chosen.append(q)
         used_indices.add(id(q))
 
-    # 2) Fill remaining up to random count in [min_questions, max_questions]
-    target = rng.randint(min_questions, max_questions)
+    # 2) Fill remaining up to target count
+    if num_questions is not None:
+        target = num_questions
+    else:
+        target = rng.randint(min_questions, max_questions)
+
     remaining_pool = [q for q in rows if id(q) not in used_indices]
     rng.shuffle(remaining_pool)
     needed = target - len(chosen)
     if needed > 0 and remaining_pool:
         chosen.extend(remaining_pool[:needed])
 
-    # 3) Sort by number and renumber sequentially
+    # 3) Shuffle for variant randomness, then sort by number and renumber
+    rng.shuffle(chosen)
     chosen.sort(key=lambda q: q["num"])
     for idx, q in enumerate(chosen, 1):
         q["num"] = idx
@@ -209,6 +316,7 @@ def content_from_csv(
     instruction: str | None = None,
     version: int = 1,
     version_marker_id: int = 3,
+    num_questions: int | None = None,
 ) -> Dict[str, Any]:
     """Build a content dict from CSV text for template generation.
 
@@ -218,11 +326,13 @@ def content_from_csv(
         instruction: optional instruction override.
         version: template version number.
         version_marker_id: ArUco marker ID encoding the version (BL corner).
+        num_questions: if set, exactly this many questions are selected
+            from the bank (validated against available count).
 
     Returns:
         Content dict compatible with validate_inputs / build_template_spec.
     """
-    questions = parse_csv_questions(csv_text)
+    questions = parse_csv_questions(csv_text, num_questions=num_questions)
     return {
         "version": version,
         "version_marker_id": version_marker_id,
@@ -251,9 +361,9 @@ def validate_inputs(layout: Dict[str, Any], content: Dict[str, Any]) -> None:
       - marker size_mm and quiet_zone_mm are > 0
       - content has version_marker_id, header, instruction, questions
       - version_marker_id is int in 3..49 (0,1,2 reserved for corner markers)
-      - questions count is 15..20
       - every question has num, text, answer_type
       - all 5 answer types are present: letter, digit, number, word, sentence
+      - table width fits on page
 
     Raises:
         ValidationError: with details.errors list if any check fails.
@@ -269,6 +379,12 @@ def validate_inputs(layout: Dict[str, Any], content: Dict[str, Any]) -> None:
     except KeyError as e:
         errs.append(f"layout missing key: {e}")
 
+    # Check table width fits on page
+    try:
+        check_table_width_mm(layout)
+    except ValidationError as e:
+        errs.append(e.message)
+
     for k in ("version_marker_id", "header", "instruction", "questions"):
         if k not in content:
             errs.append(f"content missing key: {k}")
@@ -280,8 +396,8 @@ def validate_inputs(layout: Dict[str, Any], content: Dict[str, Any]) -> None:
         errs.append("version_marker_id must be int in 3..49 (0,1,2 reserved for corners)")
 
     qs = content["questions"]
-    if not (15 <= len(qs) <= 20):
-        errs.append(f"questions count must be 15..20, got {len(qs)}")
+    if len(qs) < 1:
+        errs.append("questions count must be >= 1, got 0")
 
     types_seen: set[str] = set()
     for i, q in enumerate(qs):
@@ -313,13 +429,16 @@ def build_template_spec(
       - marker_size_px: physical marker size in pixels
       - canvas_size: page size in pixels
       - roi_fields: answer-cell ROIs derived from the same layout geometry
+      - row_height_mm: computed row height in mm
+      - question_order: original question numbers in sheet order
+      - question_count: number of questions on the sheet
 
     The BL marker ID is set to content.version_marker_id, which encodes
     the template version in the physical sheet.
 
     Args:
         layout: parsed template_layout.json.
-        content: parsed content_vN.json.
+        content: parsed content dict with questions list.
         template_id: optional explicit template version string.
 
     Returns:
@@ -359,6 +478,34 @@ def build_template_spec(
     canvas_size = (mm_to_px(page["width_mm"]), mm_to_px(page["height_mm"]))
     roi_cfg = layout.get("roi") or {}
 
+    # Compute row height automatically so all questions fit on one A4 page,
+    # unless layout.roi.row_height_mm is explicitly set.
+    num_questions = len(content["questions"])
+    fixed_row_height = float(roi_cfg.get("row_height_mm") or 0)
+    if fixed_row_height > 0:
+        row_height_mm = fixed_row_height
+    else:
+        row_height_mm = compute_row_height_mm(layout, num_questions)
+        # Check that row height is not too small (only for auto-computed)
+        if row_height_mm <= MIN_ROW_HEIGHT_MM + 0.5:
+            raise ValidationError(
+                "Too many questions for one A4 page",
+                {
+                    "num_questions": num_questions,
+                    "row_height_mm": row_height_mm,
+                    "message": f"Not enough vertical space for {num_questions} questions. "
+                               f"Row height would be {row_height_mm:.1f} mm "
+                               f"(minimum {MIN_ROW_HEIGHT_MM} mm). "
+                               f"Reduce number of questions.",
+                },
+            )
+
+    # Build ROI fields with computed row height
+    roi_fields, question_order = build_roi_fields(
+        layout, content,
+        row_height_mm=row_height_mm,
+    )
+
     return TemplateSpec(
         template_version=template_id,
         dictionary_id=dictionary_id,
@@ -367,6 +514,9 @@ def build_template_spec(
         marker_layout=marker_layout,
         marker_size_px=mm_to_px(mc["size_mm"]),
         canvas_size=canvas_size,
-        roi_fields=build_roi_fields(layout, content),
+        roi_fields=roi_fields,
         padding_px=int(roi_cfg.get("padding_px", 5)),
+        question_order=question_order,
+        question_count=num_questions,
+        row_height_mm=row_height_mm,
     )

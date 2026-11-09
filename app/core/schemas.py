@@ -58,6 +58,9 @@ class TemplateSpec(BaseModel):
     marker_layout: dict[int, tuple[int, int]] | None = None
     marker_size_px: int | None = None
     padding_px: int = 5
+    question_order: list[int] | None = None
+    question_count: int | None = None
+    row_height_mm: float | None = None
 
 
 class AlignConfig(BaseModel):
