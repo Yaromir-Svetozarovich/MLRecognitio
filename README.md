@@ -161,11 +161,6 @@ python -m pytest -q
 - **Macro-F1** — кастомная метрика вместо простой Accuracy.
 
 ---
-
-<<<<<<< HEAD
-=======
-
->>>>>>> da231d8462ddbac2d58dff217aa358ae1fe1cd4c
 ## Требования
 
 - Python 3.11+
