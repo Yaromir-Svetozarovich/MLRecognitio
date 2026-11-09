@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blank Aligner — Система распознавания бланков</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <div class="logo-mark">BA</div>
+                <span class="logo-text">Blank Aligner</span>
+            </div>
+            <div class="nav-links">
+                <a href="#" class="nav-link active">Главная</a>
+                <a href="/templates" class="nav-link">Шаблоны</a>
+                <a href="/align" class="nav-link">Нормализация</a>
+                <a href="#" class="nav-link">Результаты</a>
+            </div>
+            <div class="nav-actions">
+                <a href="#" class="btn btn-primary">Войти</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 class="hero-title">
+                    Распознавание <span class="text-gradient">рукописных бланков</span>
+                </h1>
+                <p class="hero-subtitle">
+                    Автоматизированная система нормализации A4-бланков с ArUco-маркерами, 
+                    нарезки полей ответов и обучения нейросети для распознавания рукописного ввода.
+                </p>
+                <div class="hero-actions">
+                    <a href="/templates" class="btn btn-primary btn-large">Создать бланк</a>
+                    <a href="/align" class="btn btn-outline btn-large">Нормализовать фото</a>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="card-preview">
+                    <div class="card-header">
+                        <span class="badge">Шаблон</span>
+                        <span class="badge">ROI-поля</span>
+                    </div>
+                    <div class="blank-sheet">
+                        <div class="marker tl"></div>
+                        <div class="marker tr"></div>
+                        <div class="marker bl"></div>
+                        <div class="marker br"></div>
+                        <div class="table-area">
+                            <div class="table-row">
+                                <div class="cell cell-number">1.</div>
+                                <div class="cell cell-question">Вопрос?</div>
+                                <div class="cell cell-answer"></div>
+                            </div>
+                            <div class="table-row">
+                                <div class="cell cell-number">2.</div>
+                                <div class="cell cell-question">Вопрос?</div>
+                                <div class="cell cell-answer"></div>
+                            </div>
+                            <div class="table-row">
+                                <div class="cell cell-number">3.</div>
+                                <div class="cell cell-question">Вопрос?</div>
+                                <div class="cell cell-answer"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <span class="stat">4 маркера</span>
+                        <span class="stat">ROI-поля</span>
+                        <span class="stat">Auto-разметка</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features">
+        <div class="container">
+            <h2 class="section-title">Возможности системы</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">[DOC]</div>
+                    <h3>Генерация бланков</h3>
+                    <p>Создавайте A4-бланки с ArUco-маркерами и полями ответов из CSV с вопросами.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">[PHOTO]</div>
+                    <h3>Нормализация</h3>
+                    <p>Выравнивание фото бланка в 2100×2970 пикселей, обнаружение маркеров, карта границ.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">[SCISSORS]</div>
+                    <h3>Нарезка ROI</h3>
+                    <p>Автоматическая нарезка полей ответов с точностью до пикселя.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🧠</div>
+                    <h3>CNN классификатор</h3>
+                    <p>Обучение нейросети на рукописных символах с кастомным циклом обучения.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start -->
+    <section class="quick-start">
+        <div class="container">
+            <div class="quick-start-card">
+                <h2>Начните за 3 шага</h2>
+                <div class="steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h4>Создайте бланк</h4>
+                            <p>Загрузите CSV с вопросами и получите готовый бланк с маркерами.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h4>Сфотографируйте</h4>
+                            <p>Распечатайте бланк, заполните от руки и сфотографируйте.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h4>Загрузите фото</h4>
+                            <p>Система выровнит лист, нарежет поля и распознает ответы.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-logo">
+                    <div class="logo-mark">BA</div>
+                    <span>Blank Aligner</span>
+                </div>
+                <p class="footer-text">Версия 5.0 • ЛР1–ЛР5 • Система распознавания рукописных бланков</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

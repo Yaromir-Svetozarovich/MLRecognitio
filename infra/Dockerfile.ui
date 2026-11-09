@@ -1,0 +1,10 @@
+FROM nginx:alpine
+
+# Copy static files to nginx html directory
+COPY ui-prototype/ /usr/share/nginx/html/
+
+# Expose port 8080 (mapped to host 8081 to avoid conflict with main API on 8000)
+EXPOSE 8080
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]

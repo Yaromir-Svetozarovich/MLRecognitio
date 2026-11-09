@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Нормализация фото — Blank Aligner</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <div class="logo-mark">BA</div>
+                <span class="logo-text">Blank Aligner</span>
+            </div>
+            <div class="nav-links">
+                <a href="#" class="nav-link">Главная</a>
+                <a href="/templates" class="nav-link">Шаблоны</a>
+                <a href="/align" class="nav-link active">Нормализация</a>
+                <a href="#" class="nav-link">Результаты</a>
+            </div>
+            <div class="nav-actions">
+                <a href="#" class="btn btn-primary">Войти</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Page Header -->
+    <section class="page-header">
+        <div class="container">
+            <h1 class="page-title">Нормализация фото</h1>
+            <p class="page-subtitle">
+                Загрузите фото заполненного бланка. Система найдёт ArUco-маркеры, выровнит лист в 2100×2970 и выделит поля ответов.
+            </p>
+        </div>
+    </section>
+
+    <!-- Upload Form -->
+    <section class="form-section">
+        <div class="container">
+            <div class="form-card">
+                <form id="alignForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="photo">Фото бланка <span class="req">*</span></label>
+                        <div class="file-upload">
+                            <input type="file" id="photo" name="photo" accept="image/*" required>
+                            <div class="file-info">
+                                <span class="file-name">Не выбран файл</span>
+                                <span class="file-hint">JPEG или PNG</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template_id">ID шаблона (опционально)</label>
+                        <input type="text" id="template_id" name="template_id" placeholder="template_v1_... или оставьте пустым">
+                        <small class="helper">Если не указать, будут использованы маркеры по умолчанию (0,1,2,3)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="corner_mode">Режим углов</label>
+                        <select id="corner_mode" name="corner_mode">
+                            <option value="centers">centers — центры маркеров (по умолчанию)</option>
+                            <option value="centers_to_layout">centers_to_layout — соотношение к разметке</option>
+                            <option value="outer_corners">outer_corners — внешние углы маркеров</option>
+                        </select>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-large">Нормализовать фото</button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <!-- Result Placeholder -->
+    <section class="result-section" id="resultSection" style="display: none;">
+        <div class="container">
+            <h2 class="section-title">Результат нормализации</h2>
+            <div class="result-grid">
+                <div class="result-panel">
+                    <div class="panel-header">
+                        <h3>Выровненный бланк</h3>
+                        <span class="badge">2100×2970</span>
+                    </div>
+                    <div class="image-placeholder">
+                        <div class="placeholder-icon">[DOC]</div>
+                        <p>Здесь появится выровненный бланк</p>
+                    </div>
+                </div>
+                <div class="result-panel">
+                    <div class="panel-header">
+                        <h3>Карта границ (Canny)</h3>
+                        <span class="badge">edges</span>
+                    </div>
+                    <div class="image-placeholder">
+                        <div class="placeholder-icon">[SQUARE]</div>
+                        <p>Карта границ для отладки</p>
+                    </div>
+                </div>
+                <div class="result-panel">
+                    <div class="panel-header">
+                        <h3>Маркеры</h3>
+                        <span class="badge">4 найдено</span>
+                    </div>
+                    <div class="marker-grid">
+                        <div class="marker-item">
+                            <div class="marker-dot tl"></div>
+                            <span>TL — маркер 0</span>
+                        </div>
+                        <div class="marker-item">
+                            <div class="marker-dot tr"></div>
+                            <span>TR — маркер 1</span>
+                        </div>
+                        <div class="marker-item">
+                            <div class="marker-dot bl"></div>
+                            <span>BL — маркер 3 (версия)</span>
+                        </div>
+                        <div class="marker-item">
+                            <div class="marker-dot br"></div>
+                            <span>BR — маркер 2</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 2rem;">
+                <button type="button" class="btn btn-primary">Извлечь поля ответов (ROI)</button>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-logo">
+                    <div class="logo-mark">BA</div>
+                    <span>Blank Aligner</span>
+                </div>
+                <p class="footer-text">Версия 5.0 • ЛР1–ЛР5</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

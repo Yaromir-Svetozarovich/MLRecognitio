@@ -59,10 +59,11 @@ def main(argv=None):
             num_classes=num_classes,
         )
 
-        # Проверяем split_proof.json
+        # Проверяем split_proof.json (photo_id -> split)
         split_proof = load_split_proof(config.dataset_dir)
         for split_name in ("train", "val", "test"):
-            if split_name not in split_proof or not split_proof[split_name]:
+            count = sum(1 for s in split_proof.values() if s == split_name)
+            if count == 0:
                 print(
                     f"ERROR: split_proof.json не содержит photo_id для сплита '{split_name}'",
                     file=sys.stderr,

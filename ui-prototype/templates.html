@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Шаблоны бланков — Blank Aligner</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <div class="logo-mark">BA</div>
+                <span class="logo-text">Blank Aligner</span>
+            </div>
+            <div class="nav-links">
+                <a href="#" class="nav-link">Главная</a>
+                <a href="/templates" class="nav-link active">Шаблоны</a>
+                <a href="/align" class="nav-link">Нормализация</a>
+                <a href="#" class="nav-link">Результаты</a>
+            </div>
+            <div class="nav-actions">
+                <a href="#" class="btn btn-primary">Войти</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Page Header -->
+    <section class="page-header">
+        <div class="container">
+            <h1 class="page-title">Создание бланков</h1>
+            <p class="page-subtitle">
+                Загрузите CSV с вопросами и файл разметки. Система создаст несколько вариантов бланков со случайным перемешиванием вопросов.
+            </p>
+        </div>
+    </section>
+
+    <!-- Form -->
+    <section class="form-section">
+        <div class="container">
+            <div class="form-card">
+                <form id="generateWorkForm" enctype="multipart/form-data">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="layout_file">Разметка <span class="req">*</span></label>
+                            <input type="file" id="layout_file" name="layout_file" accept=".json" required>
+                            <small class="helper">template_layout.json — геометрия бланка и маркеров</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="questions_csv">Вопросы <span class="req">*</span></label>
+                            <input type="file" id="questions_csv" name="questions_csv" accept=".csv" required>
+                            <small class="helper">questions.csv — колонки: num, text, answer_type</small>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="work_name">Название работы</label>
+                        <input type="text" id="work_name" name="work_name" value="Работа" placeholder="Например: Литературный тест 9 класс">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="num_variants">Число вариантов</label>
+                            <input type="number" id="num_variants" name="num_variants" value="4" min="1" max="20">
+                            <small class="helper">Сколько разных вариантов сгенерировать</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="num_questions">Число вопросов в варианте</label>
+                            <input type="number" id="num_questions" name="num_questions" value="" min="1" placeholder="все из банка">
+                            <small class="helper">Оставьте пустым — будут использованы все вопросы из CSV</small>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="copies_mode">Число копий</label>
+                            <select id="copies_mode" name="copies_mode">
+                                <option value="all">Одинаково для всех вариантов</option>
+                                <option value="per_variant">По вариантам отдельно</option>
+                            </select>
+                            <small class="helper">Сколько экземпляров каждого варианта</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="copies_all">Количество копий</label>
+                            <input type="number" id="copies_all" name="copies_all" value="1" min="1" max="50">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="version">Версия шаблона</label>
+                            <input type="number" id="version" name="version" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="version_marker_id">ID маркера версии (3–49)</label>
+                            <input type="number" id="version_marker_id" name="version_marker_id" value="3" min="3" max="49">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="header_author">Автор</label>
+                        <input type="text" id="header_author" name="header_author" value="Автор">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="instruction">Инструкция (опционально)</label>
+                        <textarea id="instruction" name="instruction" rows="2" placeholder="Заполняйте печатными заглавными буквами..."></textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-large">Создать варианты бланков</button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <!-- Existing Templates -->
+    <section class="templates-list-section">
+        <div class="container">
+            <h2 class="section-title">Готовые шаблоны</h2>
+            <div class="templates-list" id="templatesList">
+                <div class="template-card">
+                    <div class="template-header">
+                        <div class="template-info">
+                            <strong>template_v1_5b56f787</strong>
+                            <span class="badge">2100×2970</span>
+                            <span class="badge">4 маркера</span>
+                        </div>
+                        <div class="template-actions">
+                            <a href="#" class="btn btn-outline btn-small">DOCX</a>
+                            <a href="#" class="btn btn-outline btn-small">SPEC</a>
+                        </div>
+                    </div>
+                    <div class="template-preview">
+                        <div class="blank-mini">
+                            <div class="marker tl"></div>
+                            <div class="marker tr"></div>
+                            <div class="marker bl"></div>
+                            <div class="marker br"></div>
+                            <div class="lines">
+                                <div class="line"></div>
+                                <div class="line"></div>
+                                <div class="line"></div>
+                                <div class="line"></div>
+                                <div class="line"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-logo">
+                    <div class="logo-mark">BA</div>
+                    <span>Blank Aligner</span>
+                </div>
+                <p class="footer-text">Версия 5.0 • ЛР1–ЛР5</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

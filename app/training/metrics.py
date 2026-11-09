@@ -7,80 +7,97 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 
 
+def _import_tf():
+    """Импортировать TensorFlow с понятной ошибкой, если отсутствует."""
+    try:
+        import tensorflow as tf
+        return tf
+    except ImportError as e:  # pragma: no cover
+        raise ImportError(
+            "TensorFlow не установлен. Метрика Macro-F1 требует "
+            "tensorflow>=2.16,<3 (образ trainer)."
+        ) from e
+
+
 class MacroF1:
-    """Кастомная метрика Macro-F1 Score.
+    """Кастомная метрика Macro-F1 Score (graph-mode, tf.Variable).
 
     Считает F1 для каждого класса и усредняет без учёта поддержки
-    (macro average). Работает через накопление confusion matrix.
+    (macro average). Состояние хранится в ``tf.Variable``, поэтому
+    ``update_state`` можно вызывать внутри ``@tf.function``.
 
     Использование:
         f1 = MacroF1(num_classes=N)
-        f1.update_state(y_true, y_pred_logits)
-        value = f1.result()   # скаляр
+        f1.update_state(y_true, y_pred_logits)   # numpy или tf.Tensor
+        value = f1.result()                       # float (eager)
         f1.reset_states()
     """
 
     def __init__(self, num_classes: int, name: str = "macro_f1"):
+        tf = _import_tf()
         self.num_classes = num_classes
         self.name = name
-        # confusion matrix накапливается как матрица NxN
-        self._confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
+        # confusion matrix накапливается как tf.Variable (NxN)
+        self._confusion = tf.Variable(
+            tf.zeros((num_classes, num_classes), dtype=tf.int64),
+            trainable=False,
+            name=f"{name}_confusion",
+        )
 
     def update_state(self, y_true, y_pred):
-        """Обновить состояние метрики батчем данных.
+        """Обновить состояние метрики батчем данных (работает в graph mode).
 
         Args:
-            y_true: массив истинных меток (int), форма (batch,).
-            y_pred: массив предсказанных меток (int) или логитов (batch, num_classes).
+            y_true: истинные метки (int), форма (batch,).
+            y_pred: предсказанные метки (int) или логиты (batch, num_classes).
         """
-        import tensorflow as tf
+        tf = _import_tf()
 
-        y_true = np.asarray(y_true).astype(np.int64).ravel()
-        y_pred = np.asarray(y_pred)
+        y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        y_pred = tf.convert_to_tensor(y_pred)
 
-        # Если пришли логиты —取 argmax
-        if y_pred.ndim > 1:
-            y_pred = np.argmax(y_pred, axis=1).astype(np.int64)
+        # Если пришли логиты — берём argmax
+        if y_pred.shape.rank is not None and y_pred.shape.rank > 1:
+            y_pred = tf.argmax(y_pred, axis=1, output_type=tf.int32)
         else:
-            y_pred = y_pred.astype(np.int64).ravel()
+            y_pred = tf.cast(tf.reshape(y_pred, [-1]), tf.int32)
 
-        # Накапливаем confusion matrix
-        for t, p in zip(y_true, y_pred):
-            if 0 <= t < self.num_classes and 0 <= p < self.num_classes:
-                self._confusion[t, p] += 1
+        cm = tf.math.confusion_matrix(
+            y_true, y_pred, num_classes=self.num_classes, dtype=tf.int64
+        )
+        self._confusion.assign_add(cm)
 
     def result(self) -> float:
         """Вычислить Macro-F1 на основе накопленной confusion matrix."""
-        cm = self._confusion.astype(np.float64)
+        tf = _import_tf()
 
-        # TP по диагонали
-        tp = np.diag(cm)
-        # FP: сумма по столбцу минус TP
-        fp = cm.sum(axis=0) - tp
-        # FN: сумма по строке минус TP
-        fn = cm.sum(axis=1) - tp
+        cm = tf.cast(self._confusion, tf.float64)
+        tp = tf.linalg.diag_part(cm)
+        fp = tf.reduce_sum(cm, axis=0) - tp
+        fn = tf.reduce_sum(cm, axis=1) - tp
 
         # F1 для каждого класса: 2*TP / (2*TP + FP + FN)
         denominator = 2 * tp + fp + fn
-        f1_per_class = np.zeros(self.num_classes, dtype=np.float64)
-        mask = denominator > 0
-        f1_per_class[mask] = (2 * tp[mask]) / denominator[mask]
+        f1_per_class = tf.where(
+            denominator > 0,
+            2 * tp / tf.maximum(denominator, 1e-12),
+            tf.zeros_like(denominator),
+        )
 
         # Macro-F1: среднее по классам
-        return float(np.mean(f1_per_class))
+        return float(tf.reduce_mean(f1_per_class).numpy())
 
     def reset_states(self):
         """Сбросить накопленное состояние."""
-        self._confusion = np.zeros((self.num_classes, self.num_classes), dtype=np.int64)
+        tf = _import_tf()
+        self._confusion.assign(tf.zeros_like(self._confusion))
 
     def confusion_matrix(self) -> np.ndarray:
         """Вернуть копию накопленной confusion matrix."""
-        return self._confusion.copy()
+        return self._confusion.numpy().copy()
 
 
 class AverageMeter:

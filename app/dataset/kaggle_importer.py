@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from app.dataset.splits import split_photo_ids
 
@@ -66,9 +67,15 @@ def write_split_proof(output_dir: Path, split_assignments: Dict[str, List[str]])
 def extract_photo_id(filename: str) -> str | None:
     """Извлечь photo_id из имени файла кропа.
 
-    Ожидается формат: <photo_id>_<field_id>.png (например, photo_00001_А.png).
+    Поддерживаются форматы:
+      - photo_00001_<label>.png (метка может содержать подчёркивания);
+      - <photo_id>_<field_id>.png (например, blank001_roi15.png).
     """
     stem = Path(filename).stem
+    # Формат Kaggle-импортёра: photo_00001_<label>
+    match = re.match(r"^(photo_\d+)", stem)
+    if match:
+        return match.group(1)
     if "_" not in stem:
         return None
     photo_id, _ = stem.rsplit("_", 1)
@@ -147,6 +154,9 @@ def import_kaggle_cyrillic(
 
     photo_id_counter = 0
     grouped: Dict[str, List[Path]] = {}
+    # Метки для уже переименованных кропов: <новое_имя> -> label.
+    # labels_map здесь не подходит: его ключи — исходные имена из Kaggle.
+    crop_labels: Dict[str, str] = {}
     missing_labels = 0
 
     for img_dir in (train_dir, test_dir):
@@ -162,6 +172,7 @@ def import_kaggle_cyrillic(
             photo_id_counter += 1
             safe_label = sanitize_filename_label(label)
             new_name = f"{photo_id}_{safe_label}.png"
+            crop_labels[new_name] = label
             dest = crops_dir / new_name
             if not dest.exists():
                 shutil.copy2(str(img_file), str(dest))
@@ -199,7 +210,7 @@ def import_kaggle_cyrillic(
             split_files[split_name].append(dest)
 
     # Пишем labels.csv
-    write_labels_csv(output_dir, split_files, labels_map)
+    write_labels_csv(output_dir, split_files, crop_labels)
 
     # Пишем split_proof.json
     write_split_proof(output_dir, split_photo_id_map)

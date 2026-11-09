@@ -75,6 +75,10 @@ Trade-off центров оговорить в отчёте.
 Источник истины по ID: TemplateSpec авторитетен; AlignConfig.expected_ids —
 фолбэк CLI/отладки без спеки.
 
+Обучение CNN (ЛР4): только tf.GradientTape + @tf.function для
+train_step/val_step; model.fit запрещён. Macro-F1 — кастомная graph-mode
+метрика на tf.Variable (update_state можно вызывать внутри @tf.function).
+
 Ошибки типизированы. Домены кидают кастомные исключения; DAG Fail-Fast:
 любое исключение узла прерывает конвейер. HTTP-маппинг — единый handler.
 
@@ -145,8 +149,8 @@ Docker + docker-compose; том /data.
     dataset/         ЛР3-ЛР4 частично: builder.py, splits.py (photo_id
                      70/15/15)
 
-    training/        ЛР4 (не создано): model.py, dataset_tf.py, metrics.py,
-                     train_loop.py, train.py, config.py (TrainingConfig)
+    training/        ЛР4 (код готов): config.py, model.py, dataset_tf.py,
+                     metrics.py, train_loop.py, train.py
 
     export/          ЛР5 (не создано): export_tflite.py
 
@@ -383,8 +387,10 @@ Fail-Fast в DAG: любое из перечисленных исключени�
   python -m app.cli build-dataset --crops-dir <dir> --labels <labels.csv>
       --out dataset/ --template-version <ver> --photo-id <id>
       [--split train|val|test] [--json]                    [реализовано]
-  python -m app.cli train --data dataset/ --config training.yaml [--json]
-                                                           [план, ЛР4]
+  python -m app.cli train --dataset-dir dataset/ --output-dir out/
+      --alphabet alphabet.json [--epochs N] [--batch-size N]
+      [--learning-rate X] [--input-height H] [--input-width W] [--json]
+                                                           [реализовано]
   python -m app.cli export-tflite --model model.keras --out model.tflite
       [--quantization dynamic] [--benchmark benchmark.json] [--json]
                                                            [план, ЛР5]
@@ -684,14 +690,22 @@ tensorflow в api/serving, нет model.fit, DAG-оркестратор, тип�
      авто-ROI из layout, нарезка по spec.json. Осталось: пачка 10+
      листов за запуск, dataset_manifest.json/labels.csv, полный
      split_proof.json по photo_id.
-ЛР4: В РАЗРАБОТКЕ (код готов, ждет TensorFlow + реальные данные).
-     app/training/* создан: config.py, model.py (CNN 3 блока Conv/Pool/Dropout/GAP),
-     dataset_tf.py (tf.data.Dataset batch/prefetch), metrics.py (Macro-F1),
-     train_loop.py (tf.GradientTape, train_step/val_step, нет model.fit),
+ЛР4: КОД ГОТОВ, ЖДЁТ РЕАЛЬНЫЕ ДАННЫЕ. TensorFlow установлен (2.21).
+     app/training/*: config.py, model.py (CNN 3 блока Conv/Pool/Dropout/GAP),
+     dataset_tf.py (tf.data.Dataset batch/prefetch, сплит по photo_id),
+     metrics.py (Macro-F1 на tf.Variable, graph-mode),
+     train_loop.py (tf.GradientTape + @tf.function train_step/val_step,
+     нет model.fit, save_weights по лучшему val_f1),
      train.py (точка входа), build_dataset.py (сплит по photo_id),
      cli.py train, alphabet.json (69 классов: A-Z, А-Я, 0-9).
-     Осталось: установить TensorFlow, собрать реальные размеченные crops,
+     Исправлены баги: проверка split_proof.json (photo_id -> split),
+     импорт AverageMeter, int64/int32 в accuracy, пустые метки
+     в kaggle_importer (labels.csv).
+     Осталось: собрать реальные размеченные crops символов
+     (бланк -> заполнение -> фото -> align -> extract -> build-dataset),
      запустить обучение, получить confusion_matrix.png.
+     ВАЖНО: data/kaggle_cyrillic — рукописные СЛОВА (37 493 метки),
+     не подходит для 69-классового классификатора символов.
 ЛР5: НЕ НАЧАТО. Нужно создать app/export/*, app/serving/*, CLI
      grade/settings/serve, api/routes/grade, jobs, settings; вкладку
      «Настройки».

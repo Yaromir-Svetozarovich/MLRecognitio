@@ -1,23 +1,24 @@
 """Низкоуровневый цикл обучения CNN (ЛР4).
 
 Реализует пользовательский цикл обучения на базе tf.GradientTape с
-разделением на train_step и val_step. Вызов model.fit ЗАПРЕЩЁН.
+разделением на train_step и val_step, скомпилированные через @tf.function.
+Вызов model.fit ЗАПРЕЩЁН.
 
 Структура:
-  - train_step(images, labels, model, optimizer, loss_fn, metrics) -> dict
-  - val_step(images, labels, model, loss_fn, metrics) -> dict
+  - make_train_step(model, optimizer, loss_fn, macro_f1) -> tf.function
+  - make_val_step(model, loss_fn, macro_f1) -> tf.function
   - fit_loop(model, train_ds, val_ds, epochs, ...) -> history dict
 """
 
 from __future__ import annotations
 
 import csv
-import json
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import numpy as np
+
+from app.training.metrics import AverageMeter
 
 
 def _import_tf():
@@ -32,81 +33,71 @@ def _import_tf():
         ) from e
 
 
-def train_step(
-    images: np.ndarray,
-    labels: np.ndarray,
-    model,
-    optimizer,
-    loss_fn,
-    train_metrics: Dict[str, Any],
-) -> Dict[str, float]:
-    """Один шаг обучения на батче через tf.GradientTape.
+def make_train_step(model, optimizer, loss_fn, macro_f1):
+    """Создать шаг обучения, скомпилированный через @tf.function.
+
+    Внутри одного графа: forward pass, GradientTape, backward pass,
+    apply_gradients, accuracy и обновление состояния Macro-F1.
 
     Args:
-        images: тензор изображений (batch, H, W, C).
-        labels: тензор меток (batch,).
         model: tf.keras.Model.
         optimizer: tf.keras.optimizers.Optimizer.
         loss_fn: функция потерь (например, SparseCategoricalCrossentropy).
-        train_metrics: словарь с объектом MacroF1 и AverageMeter для потерь.
+        macro_f1: объект MacroF1 (graph-mode, хранит tf.Variable).
 
     Returns:
-        Словарь с loss, accuracy, macro_f1 для данного батча.
+        tf.function(images, labels) -> (loss, accuracy).
     """
     tf = _import_tf()
 
-    with tf.GradientTape() as tape:
-        logits = model(images, training=True)
-        loss = loss_fn(labels, logits)
+    @tf.function
+    def train_step(images, labels):
+        with tf.GradientTape() as tape:
+            logits = model(images, training=True)
+            loss = loss_fn(labels, logits)
 
-    grads = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+        grads = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
-    # Метрики
-    predictions = tf.argmax(logits, axis=1)
-    accuracy = tf.reduce_mean(tf.cast(tf.equal(predictions, labels), tf.float32))
+        predictions = tf.argmax(logits, axis=1)
+        accuracy = tf.reduce_mean(
+            tf.cast(
+                tf.equal(predictions, tf.cast(labels, predictions.dtype)),
+                tf.float32,
+            )
+        )
+        macro_f1.update_state(labels, predictions)
+        return loss, accuracy
 
-    # Macro-F1 обновляется состоянием
-    f1_metric = train_metrics["macro_f1"]
-    f1_metric.update_state(labels.numpy(), predictions.numpy())
-
-    loss_meter = train_metrics["loss_meter"]
-    loss_meter.update(float(loss), count=images.shape[0])
-
-    return {
-        "loss": float(loss),
-        "accuracy": float(accuracy),
-        "macro_f1": f1_metric.result(),
-    }
+    return train_step
 
 
-def val_step(
-    images: np.ndarray,
-    labels: np.ndarray,
-    model,
-    loss_fn,
-    val_metrics: Dict[str, Any],
-) -> Dict[str, float]:
-    """Один шаг валидации без градиентов."""
+def make_val_step(model, loss_fn, macro_f1):
+    """Создать шаг валидации, скомпилированный через @tf.function.
+
+    Без градиентов: forward pass, loss, accuracy и обновление Macro-F1.
+
+    Returns:
+        tf.function(images, labels) -> (loss, accuracy).
+    """
     tf = _import_tf()
 
-    logits = model(images, training=False)
-    loss = loss_fn(labels, logits)
+    @tf.function
+    def val_step(images, labels):
+        logits = model(images, training=False)
+        loss = loss_fn(labels, logits)
 
-    predictions = tf.argmax(logits, axis=1)
-    accuracy = tf.reduce_mean(tf.cast(tf.equal(predictions, labels), tf.float32))
+        predictions = tf.argmax(logits, axis=1)
+        accuracy = tf.reduce_mean(
+            tf.cast(
+                tf.equal(predictions, tf.cast(labels, predictions.dtype)),
+                tf.float32,
+            )
+        )
+        macro_f1.update_state(labels, predictions)
+        return loss, accuracy
 
-    f1_metric = val_metrics["macro_f1"]
-    f1_metric.update_state(labels.numpy(), predictions.numpy())
-
-    loss_meter = val_metrics["loss_meter"]
-    loss_meter.update(float(loss), count=images.shape[0])
-
-    return {
-        "loss": float(loss),
-        "accuracy": float(accuracy),
-        "macro_f1": f1_metric.result(),
-    }
+    return val_step
 
 
 def fit_loop(
@@ -157,6 +148,10 @@ def fit_loop(
     train_loss_meter = AverageMeter("train_loss")
     val_loss_meter = AverageMeter("val_loss")
 
+    # Шаги компилируются один раз на весь цикл обучения.
+    train_step = make_train_step(model, optimizer, loss_fn, train_macro_f1)
+    val_step = make_val_step(model, loss_fn, val_macro_f1)
+
     history = {
         "epoch": [],
         "train_loss": [],
@@ -174,10 +169,8 @@ def fit_loop(
         train_loss_meter.reset_states()
 
         for images, labels in train_ds:
-            train_step(images, labels, model, optimizer, loss_fn, {
-                "macro_f1": train_macro_f1,
-                "loss_meter": train_loss_meter,
-            })
+            loss, _accuracy = train_step(images, labels)
+            train_loss_meter.update(float(loss), count=int(images.shape[0]))
 
         train_loss = train_loss_meter.result()
         train_f1 = train_macro_f1.result()
@@ -187,10 +180,8 @@ def fit_loop(
         val_loss_meter.reset_states()
 
         for images, labels in val_ds:
-            val_step(images, labels, model, loss_fn, {
-                "macro_f1": val_macro_f1,
-                "loss_meter": val_loss_meter,
-            })
+            loss, _accuracy = val_step(images, labels)
+            val_loss_meter.update(float(loss), count=int(images.shape[0]))
 
         val_loss = val_loss_meter.result()
         val_f1 = val_macro_f1.result()
