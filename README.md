@@ -51,13 +51,38 @@ questions.csv     банк вопросов
 
 ## Быстрый старт
 
-### 1. Установка зависимостей
+### Вариант 1: Через setup.bat (Windows)
+
+1. Склонируйте репозиторий.
+2. Запустите `setup.bat` — он проверит Python, обновит pip, установит зависимости из `requirements.txt` и проверит импорты.
+3. После этого у вас будет готово окружение для запуска API и генератора бланков.
 
 ```bat
 setup.bat
 ```
 
-### 2. Генерация бланка (ЛР1)
+### Вариант 2: Через Docker
+
+Сборка и запуск только API-контейнера (без TensorFlow, лёгкий):
+
+```bash
+docker compose -f infra/docker-compose.yml build api
+docker compose -f infra/docker-compose.yml up -d api
+```
+
+Веб-интерфейс будет доступен по адресу: `http://localhost:8000`
+
+Для обучения модели (требует TensorFlow) используйте отдельный образ trainer:
+
+```bash
+docker compose -f infra/docker-compose.yml --profile trainer up trainer
+```
+
+## Что сделать после запуска
+
+### 1. Сгенерировать бланк (ЛР1)
+
+Через CLI:
 
 ```bash
 python generate_blank.py --layout template_layout.json --content content_v1.json --output output\blank_v1.docx --template-id template_v1_xxxx
@@ -65,31 +90,17 @@ python generate_blank.py --layout template_layout.json --content content_v1.json
 
 Спека сохраняется рядом: `output\blank_v1.spec.json`.
 
-### 3. Генерация работы из CSV (ЛР1/ЛР3)
+### 2. Создать работу из CSV (ЛР1/ЛР3)
 
-Через CLI:
-```bash
-python -m app.cli ...  # (см. команды ниже)
-```
+Через Web: откройте `http://localhost:8000/templates`
 
-Через Web: `http://localhost:8000/templates`
+### 3. Нормализовать фото бланка (ЛР2)
 
-### 4. Нормализация фото (ЛР2)
+Через Web: `http://localhost:8000/align`
 
-Через Web: `http://localhost:8000/align`  
-Загрузите фото бланка -> система найдет 4 ArUco-маркера и выровняет лист в 2100×2970.
+Загрузите фото заполненного бланка — система найдет 4 ArUco-маркера и выровняет лист в 2100×2970.
 
-После нормализации нажмите **"Извлечь поля ответов"** — система нарежет ROI-поля (q1_answer, q2_answer, ...) и покажет каждую как картинку.
-
-### 5. Тесты
-
-```bash
-python -m pytest -q
-```
-
-Ожидаемый результат: все тесты проходят (без TensorFlow часть пропускается).
-
----
+После нормализации нажмите **«Извлечь поля ответов»** — система нарежет ROI-поля (q1_answer, q2_answer, ...) и покажет каждую как картинку с координатами.
 
 ## CLI команды
 
@@ -114,18 +125,13 @@ Exit codes: `0` — успех, `2` — доменная ошибка, `3` — I
 
 ---
 
-## Docker
+## Тесты
 
-### API (лёгкий, без TensorFlow)
 ```bash
-docker compose -f infra/docker-compose.yml up -d api
-# Веб-интерфейс: http://localhost:8000
+python -m pytest -q
 ```
 
-### Trainer (с TensorFlow, оффлайн)
-```bash
-docker compose -f infra/docker-compose.yml --profile trainer up trainer
-```
+Ожидаемый результат: все тесты проходят. Тесты, требующие TensorFlow, пропускаются автоматически, если он не установлен.
 
 ---
 
@@ -142,6 +148,8 @@ docker compose -f infra/docker-compose.yml --profile trainer up trainer
 | POST | `/api/templates/generate-work` | CSV + layout -> варианты DOCX + spec.json + ZIP |
 | GET | `/api/templates/{id}/docx` | Скачать DOCX шаблона |
 
+---
+
 ## Архитектурные решения (SKILL v5)
 
 - **Каноническая раскладка маркеров:** `0 → TL`, `1 → TR`, `2 → BR`, `version_marker_id → BL`. Единственная точка истины — `resolve_marker_ids()` в `template/generator.py`.
@@ -151,40 +159,6 @@ docker compose -f infra/docker-compose.yml --profile trainer up trainer
 - **Нет TensorFlow в api/serving** — trainer lives only in offline image.
 - **Сплит строго по photo_id** — защита от утечек данных между train/val/test.
 - **Macro-F1** — кастомная метрика вместо простой Accuracy.
-
----
-
-## Как залить на GitHub
-
-```powershell
-# 1. Инициализировать репозиторий (если ещё не сделано)
-git init
-git add .
-git commit -m "Начальная версия"
-
-# 2. Привязать к вашему репозиторию на GitHub
-git remote add origin https://github.com/ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ.git
-git branch -M main
-
-# 3. Запушить
-git push -u origin main
-```
-
-Если Git запрашивает логин/пароль — используйте **Personal Access Token** (не пароль от аккаунта):
-- Создать токен: https://github.com/settings/tokens/new (права `repo`)
-- При запросе пароля вставить токен.
-
-### Если ветки разные истории (`main` и `newtest` без общего предка):
-
-```powershell
-git checkout main
-git pull origin main
-git merge newtest --allow-unrelated-histories
-# при конфликтах исправить файлы, затем:
-git add .
-git commit -m "Merge newtest into main"
-git push origin main
-```
 
 ---
 
