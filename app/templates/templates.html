@@ -29,6 +29,11 @@
             <input type="number" id="num_variants" name="num_variants" value="4" min="1" max="20">
         </div>
         <div class="form-group">
+            <label for="num_questions">Число вопросов в варианте:</label>
+            <input type="number" id="num_questions" name="num_questions" value="" min="1" placeholder="все из банка">
+            <small style="color: var(--text-muted);">Оставьте пустым, чтобы использовать все вопросы из CSV</small>
+        </div>
+        <div class="form-group">
             <label>Куда сохранить:</label>
             <div style="display:flex; gap:1rem;">
                 <label style="display:flex; align-items:center; gap:0.5rem;">
